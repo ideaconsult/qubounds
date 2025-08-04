@@ -1,0 +1,25 @@
+[project]
+name = "toxpredict-cp"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "vedina",email = "jeliazkova.nina@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ploomber (>=0.23.3,<0.24.0)",
+    "pandas (>=2.3.1,<3.0.0)",
+    "openpyxl (>=3.1.5,<4.0.0)",
+    "matplotlib (>=3.10.5,<4.0.0)",
+    "rdkit (>=2025.3.5,<2026.0.0)",
+    "plotly (>=6.2.0,<7.0.0)",
+    "statsmodels (>=0.14.5,<0.15.0)",
+    "chardet (>=5.2.0,<6.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
