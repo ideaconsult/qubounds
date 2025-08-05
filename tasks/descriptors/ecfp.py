@@ -33,7 +33,7 @@ def get_conn():
     return _cached_conn
 
 
-def smiles_to_ecfp_cached(smiles: str, radius: int = 2, n_bits: int = 2048, conn = None) -> np.ndarray:
+def smiles_to_ecfp_cached(smiles: str, radius: int = 4, n_bits: int = 2048, conn = None) -> np.ndarray:
     if conn is None:
         conn = get_conn()
     mol = Chem.MolFromSmiles(smiles)
