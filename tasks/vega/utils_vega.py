@@ -28,6 +28,34 @@ def load_vega_report(file):
     return pd.read_csv(file, sep="\t", skiprows=4,  encoding=encoding, encoding_errors="ignore"), metadata
 
 
+def clean_vega_report_df(df):
+    df.columns = ['ID' if col.lower() == 'id' else col for col in df.columns]
+    has_cas = df['ID'].astype(str).str.fullmatch(r'\d{2,7}-\d{2}-\d').any()
+
+    df = df[~df['SMILES'].astype(str).str.strip().str.upper().isin(
+        ['SMILES', 'SMILES STRUCTURE', 'SMILES VEGA', 'VEGA SMILES',
+            'SMI VEGA', 'MDL SMILES STRUCTURE', 'NEUTRALIZED (Kekulized)_VEGA SMILES'])]
+    df.columns = ['Smiles' if col.lower() == 'smiles' else col for col in df.columns]
+    if not has_cas:
+        df = df[df["ID"].str.isdigit()].copy()
+    df['ID'] = df['ID'].astype(str)
+    start_idx = df.columns.get_loc('Assessment') + 1  # +1 to exclude 'Assessment'
+    end_idx = next(  # Exclusive of 'Experimental'
+        (i for i, col in enumerate(df.columns) if col.strip().startswith("Experimental")),
+        None  # fallback if not found
+    )
+    predicted_columns = df.columns[start_idx:end_idx]
+    _col_d = "Descriptors range check"
+    if _col_d in df.columns:
+        df[_col_d] = (
+            df[_col_d]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .map({'true': 1, 'false': 0})
+        )
+    return df, predicted_columns
+
 def plot_histogram(df, column, pngfile):
     # Plot histogram
     plt.figure(figsize=(12, 6))
