@@ -30,13 +30,13 @@ def load_vega_report(file):
 
 def clean_vega_report_df(df):
     df.columns = ['ID' if col.lower() == 'id' else col for col in df.columns]
-    has_cas = df['ID'].astype(str).str.fullmatch(r'\d{2,7}-\d{2}-\d').any()
+    has_string = df['ID'].astype(str).str.strip().ne('').any()
 
     df = df[~df['SMILES'].astype(str).str.strip().str.upper().isin(
         ['SMILES', 'SMILES STRUCTURE', 'SMILES VEGA', 'VEGA SMILES',
             'SMI VEGA', 'MDL SMILES STRUCTURE', 'NEUTRALIZED (Kekulized)_VEGA SMILES'])]
     df.columns = ['Smiles' if col.lower() == 'smiles' else col for col in df.columns]
-    if not has_cas:
+    if not has_string:
         df = df[df["ID"].str.isdigit()].copy()
     df['ID'] = df['ID'].astype(str)
     start_idx = df.columns.get_loc('Assessment') + 1  # +1 to exclude 'Assessment'
