@@ -2,6 +2,7 @@ import pandas as pd
 
 
 def prepare_properties(df_long, possible_props, id_cols=['No.', 'ID', 'Smiles']):
+    print(df_long.info())
     # Unique chemicals (ensure we always return them even if no props are present)
     unique_chems = df_long[id_cols].drop_duplicates().reset_index(drop=True)
 
@@ -14,7 +15,7 @@ def prepare_properties(df_long, possible_props, id_cols=['No.', 'ID', 'Smiles'])
         df_wide = unique_chems.copy()
     else:
         df_wide = df_filtered.pivot_table(
-            index=['No.', 'ID', 'Smiles'],
+            index=id_cols,
             columns='Property',
             values='Property_mean',
             aggfunc='mean'
