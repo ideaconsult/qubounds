@@ -3,28 +3,36 @@ from typing import List, Tuple
 
 
 def prepare_properties(df_long, possible_props, id_cols=['No.', 'ID', 'Smiles']):
-    print(df_long.info())
-    # Unique chemicals (ensure we always return them even if no props are present)
+    # Check ID columns exist
+    missing = [c for c in id_cols if c not in df_long.columns]
+    if missing:
+        raise ValueError(f"Missing ID columns: {missing}")
+
+    # Keep all molecules, even if no properties are found
     unique_chems = df_long[id_cols].drop_duplicates().reset_index(drop=True)
 
-    existing_props = set(df_long['Property']).intersection(possible_props)
+    # Keep only the properties we want that are actually present
+    existing_props = [p for p in possible_props if p in df_long['Property'].unique()]
+    if not existing_props:
+        return unique_chems
 
-    # Filter only relevant rows
     df_filtered = df_long[df_long['Property'].isin(existing_props)]
-    # Pivot to one row per chemical (if nothing to pivot, start from unique_chems)
-    if df_filtered.empty:
-        df_wide = unique_chems.copy()
-    else:
-        df_wide = df_filtered.pivot_table(
-            index=id_cols,
-            columns='Property',
-            values='Property_mean',
-            aggfunc='mean'
-        ).reset_index()
 
-        # if some chemicals in unique_chems were missing in pivot (shouldn't happen),
-        # merge to ensure full set (safer)
-        df_wide = unique_chems.merge(df_wide, on=['No.', 'ID', 'Smiles'], how='left')
+    # Pivot each metric separately
+    mean_pivot = df_filtered.pivot(index=id_cols, columns='Property', values='Property_mean')
+    lower_pivot = df_filtered.pivot(index=id_cols, columns='Property', values='Property_lower')
+    upper_pivot = df_filtered.pivot(index=id_cols, columns='Property', values='Property_upper')
+
+    # Rename bounds
+    lower_pivot.columns = [f"{c}_lower" for c in lower_pivot.columns]
+    upper_pivot.columns = [f"{c}_upper" for c in upper_pivot.columns]
+
+    # Join them on the index, then bring back ID columns
+    df_pivoted = mean_pivot.join([lower_pivot, upper_pivot]).reset_index()
+
+    # Merge with unique_chems to ensure all molecules are included
+    df_wide = unique_chems.merge(df_pivoted, on=id_cols, how='left')
+
     return df_wide
 
 
