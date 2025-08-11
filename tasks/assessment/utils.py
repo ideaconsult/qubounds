@@ -1,4 +1,5 @@
 import pandas as pd
+from typing import List, Tuple
 
 
 def prepare_properties(df_long, possible_props, id_cols=['No.', 'ID', 'Smiles']):
@@ -63,3 +64,50 @@ def run_in_chunks(df_long, chunk_size=10, estimate=None):
 
     # Combine all chunk results
     return pd.concat(results, ignore_index=True)
+
+
+def fuzzy_memberships_from_interval(
+    interval: Tuple[float, float], 
+    thresholds: List[float]
+) -> List[float]:
+    """
+    Calculate fuzzy membership scores of a property interval over threshold-defined classes.
+
+    Args:
+        interval: Tuple (L, U) - lower and upper bounds of the predicted interval.
+        thresholds: Sorted list of thresholds [T1, T2, ..., Tn] dividing classes.
+
+    Returns:
+        memberships: List of floats representing membership in each class.
+                     The length is len(thresholds) + 1.
+    """
+    L, U = interval
+    if U < L:
+        raise ValueError("Upper bound must be >= lower bound")
+
+    # Define class intervals based on thresholds
+    bounds = [float('-inf')] + thresholds + [float('inf')]
+    interval_length = U - L
+
+    memberships = []
+    for i in range(len(bounds) - 1):
+        low = bounds[i]
+        high = bounds[i + 1]
+
+        # Overlap between predicted interval and class interval
+        overlap = max(0.0, min(U, high) - max(L, low))
+
+        memberships.append(overlap)
+
+    # Normalize memberships if interval length > 0
+    if interval_length > 0:
+        memberships = [m / interval_length for m in memberships]
+    else:
+        # If zero-length interval, assign membership fully to the class containing the point
+        memberships = [0.0] * len(memberships)
+        for i in range(len(bounds) - 1):
+            if bounds[i] <= L < bounds[i + 1]:
+                memberships[i] = 1.0
+                break
+
+    return memberships
