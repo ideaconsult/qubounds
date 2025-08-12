@@ -7,6 +7,7 @@ import json
 import plotly.express as px
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import chardet
+import ast
 
 
 def load_vega_report(file):
@@ -433,3 +434,50 @@ def get_adi_cols():
     #                     "Max error index",
     #                     "Descriptors range check", "ACF index",
     #                     "Predicted LogP (Meylan/Kowwin)", "MW"]    
+
+
+def parse_classvalues(classvalues_str):
+    """
+    Convert a string like '{0.0=NON-Toxic, 1.0=Toxic, -1.0=Not predicted}'
+    into a Python dictionary: {0.0: 'NON-Toxic', 1.0: 'Toxic', -1.0: 'Not predicted'}
+    """
+    # Remove surrounding braces
+    content = classvalues_str.strip('{}')
+
+    # Split into key=value pairs
+    pairs = content.split(',')
+
+    corrected_pairs = []
+    for pair in pairs:
+        key, val = pair.split('=')
+        key = key.strip()
+        val = val.strip()
+        # Quote the value properly to make it a valid Python string
+        val_quoted = repr(val)
+        corrected_pairs.append(f"{key}: {val_quoted}")
+
+    # Rebuild the string with ':' instead of '=' and quoted values
+    corrected_str = "{" + ", ".join(corrected_pairs) + "}"
+
+    # Safely evaluate the string into a dictionary
+    return ast.literal_eval(corrected_str)
+
+
+def replace_labels_with_keys(df, column, classvalues_dict):
+    """
+    Replace text labels in df[column] with numeric keys from classvalues_dict.
+
+    Parameters:
+    - df: pandas DataFrame
+    - column: str, column name with text labels
+    - classvalues_dict: dict mapping numeric keys to text labels
+
+    Returns:
+    - DataFrame with new column '{column}_numeric' with replaced numeric values
+    """
+    # invert dict to map text label -> numeric key
+    inverse_dict = {v: k for k, v in classvalues_dict.items()}
+
+    df[f'{column}_numeric'] = df[column].map(inverse_dict)
+
+    return df, f'{column}_numeric'
