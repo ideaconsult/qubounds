@@ -440,7 +440,21 @@ def parse_classvalues(classvalues_str):
     """
     Convert a string like '{0.0=NON-Toxic, 1.0=Toxic, -1.0=Not predicted}'
     into a Python dictionary: {0.0: 'NON-Toxic', 1.0: 'Toxic', -1.0: 'Not predicted'}
+
+    {0.0=NON-Toxicant, 1.0=Toxicant, -1.0=Not Classifiable, 2.0=Reproductive and developmental toxicant, 
+    4.0=Reproductive toxicant (no data on developmental toxicity), 
+    8.0=Developmental toxicant (no data on reproductive toxicity), 
+    9.0=Developmental NON-toxicant (no data on reproductive toxicity), 
+    5.0=Developmental toxicant, reproductive NON-toxicant, 
+    10.0=No data on reproductive and developmental toxicity, 
+    3.0=Reproductive toxicant, developmental NON-toxicant, 
+    6.0=Reproductive and developmental NON-toxicant, 
+    7.0=Reproductive NON-toxicant (no data on developmental toxicity)}
     """
+
+    for patch in ["5.0=Developmental toxicant, reproductive NON-toxicant","3.0=Reproductive toxicant, developmental NON-toxicant"]:
+        classvalues_str = classvalues_str.replace(patch, patch.replace(",","_"))
+
     # Remove surrounding braces
     content = classvalues_str.strip('{}')
 
