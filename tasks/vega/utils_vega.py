@@ -10,6 +10,19 @@ import chardet
 import ast
 
 
+def load_vega_models(file_vega_models, model):
+    df_models = pd.read_excel(file_vega_models, engine="openpyxl")
+    df_models = df_models.loc[df_models["Key"] == model]
+
+    needs_fix = df_models['ClassValues'].astype(str).str.contains('Âµ').any()
+    if needs_fix:
+        print("Column ClassValues contains garbled encoding — fixing...")
+        df_models['ClassValues'] = df_models['ClassValues'].str.replace('Âµ', 'µ', regex=False)
+    classvalues_str = df_models.loc[df_models["Key"] == model, "ClassValues"].values[0]
+    classvalues_dict = parse_classvalues(classvalues_str)
+    return df_models, classvalues_str, classvalues_dict
+
+
 def load_vega_report(file):
     print("load_vega_report")
     with open(file, 'rb') as f:
