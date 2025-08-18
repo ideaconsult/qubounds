@@ -2,7 +2,7 @@ import pandas as pd
 from typing import List, Tuple
 
 
-def prepare_properties(df_long, possible_props, id_cols=['No.', 'ID', 'Smiles']):
+def prepare_properties(df_long, possible_props, id_cols=['No.', 'ID', 'Smiles'], class_props=[]):
     # Check ID columns exist
     missing = [c for c in id_cols if c not in df_long.columns]
     if missing:
@@ -11,27 +11,35 @@ def prepare_properties(df_long, possible_props, id_cols=['No.', 'ID', 'Smiles'])
     # Keep all molecules, even if no properties are found
     unique_chems = df_long[id_cols].drop_duplicates().reset_index(drop=True)
 
-    # Keep only the properties we want that are actually present
-    existing_props = [p for p in possible_props if p in df_long['Property'].unique()]
-    if not existing_props:
-        return unique_chems
+    if possible_props is not None:
+        # Keep only the properties we want that are actually present
+        existing_props = [p for p in possible_props if p in df_long['Property'].unique()]
+        if not existing_props:
+            return unique_chems
 
-    df_filtered = df_long[df_long['Property'].isin(existing_props)]
+        df_filtered = df_long[df_long['Property'].isin(existing_props)]
 
-    # Pivot each metric separately
-    mean_pivot = df_filtered.pivot(index=id_cols, columns='Property', values='Property_mean')
-    lower_pivot = df_filtered.pivot(index=id_cols, columns='Property', values='Property_lower')
-    upper_pivot = df_filtered.pivot(index=id_cols, columns='Property', values='Property_upper')
+        # Pivot each metric separately
+        mean_pivot = df_filtered.pivot(index=id_cols, columns='Property', values='Property_mean')
+        lower_pivot = df_filtered.pivot(index=id_cols, columns='Property', values='Property_lower')
+        upper_pivot = df_filtered.pivot(index=id_cols, columns='Property', values='Property_upper')
 
-    # Rename bounds
-    lower_pivot.columns = [f"{c}_lower" for c in lower_pivot.columns]
-    upper_pivot.columns = [f"{c}_upper" for c in upper_pivot.columns]
+        # Rename bounds
+        lower_pivot.columns = [f"{c}_lower" for c in lower_pivot.columns]
+        upper_pivot.columns = [f"{c}_upper" for c in upper_pivot.columns]
 
-    # Join them on the index, then bring back ID columns
-    df_pivoted = mean_pivot.join([lower_pivot, upper_pivot]).reset_index()
+        # Join them on the index, then bring back ID columns
+        df_pivoted = mean_pivot.join([lower_pivot, upper_pivot]).reset_index()
 
-    # Merge with unique_chems to ensure all molecules are included
-    df_wide = unique_chems.merge(df_pivoted, on=id_cols, how='left')
+        # Merge with unique_chems to ensure all molecules are included
+        df_wide = unique_chems.merge(df_pivoted, on=id_cols, how='left')
+    else:
+        df_wide = unique_chems
+
+    for class_prop in class_props:
+        df_biodeg = df_long.loc[df_long["Property"] == class_prop][['No.', 'ID', 'Smiles',"Top_Label", "Fuzzy_Scores"]]
+        df_wide = df_wide.merge(df_biodeg, on=['No.', 'ID', 'Smiles'], how='outer')
+        df_wide.rename(columns={"Top_Label": class_prop, "Fuzzy_Scores" : f"{class_prop}_score"}, inplace=True)
 
     return df_wide
 
@@ -119,3 +127,9 @@ def fuzzy_memberships_from_interval(
                 break
 
     return memberships
+
+
+def clean_set_tags(df, column="tag", tags=[]):
+    for tag in tags:
+        df.loc[df[column].str.contains(tag, na=False, regex=False), column] = tag
+    return df
