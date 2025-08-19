@@ -8,7 +8,7 @@ import plotly.express as px
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import chardet
 import ast
-from tasks.vega.thresholds import Thresholds
+from tasks.assessment.thresholds import Thresholds
 
 
 def load_vega_models(file_vega_models, model):
@@ -182,105 +182,6 @@ def plot_violin_grouped(df, value_column, group_column, title, pngfile):
     else:    
         plt.savefig(pngfile, dpi=300, bbox_inches='tight')
     plt.close()
-
-
-def plot_violin_grouped_faceted(df, value_columns, group_column, title,
-                                pngfile=None, thresholds: Thresholds = None):
-    """
-    Plot faceted violin plots for multiple numeric columns grouped by a categorical group.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Input dataset.
-    value_columns : list of str
-        List of numeric columns to plot (each gets its own subplot).
-    group_column : str
-        Categorical column used for grouping.
-    title : str
-        Overall figure title.
-    pngfile : str or None, optional
-        If None, shows the plot interactively. If a string, saves the figure to this path.
-    thresholds : Thresholds or None, optional
-        A Thresholds object defining regulatory cutoffs for each column.
-        If provided, horizontal lines are drawn for each threshold.
-
-    Returns
-    -------
-    None
-        Displays or saves the figure.
-
-    Examples
-    --------
-    Create some thresholds:
-
-    >>> thr = Thresholds()
-    >>> thr.add("blood_pressure", 120, name="pre-hypertension")
-    >>> thr.add("blood_pressure", 140, name="hypertension")
-    >>> thr.add("glucose", 126)
-    >>> thr.add("bmi", [25, 30])
-
-    Then plot violin plots with thresholds:
-
-    >>> plot_violin_grouped_faceted(
-    ...     df=my_df,
-    ...     value_columns=["blood_pressure", "glucose", "bmi"],
-    ...     group_column="treatment",
-    ...     title="Clinical thresholds example",
-    ...     thresholds=thr
-    ... )
-    """
-    ncols = 2
-    nrows = (len(value_columns) + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6*ncols, 5*nrows), squeeze=False)
-
-    for idx, value_column in enumerate(value_columns):
-        ax = axes[idx // ncols, idx % ncols]
-        
-        # Clean data
-        df_clean = df.dropna(subset=[value_column, group_column])
-        grouped = df_clean.groupby(group_column)[value_column]
-        #group_labels, data = zip(*[(name, group.values) for name, group in grouped])
-        # Extract labels and data
-        group_labels, data = zip(*[(name.replace("_", "\n"), group.values) for name, group in grouped])
-
-
-        # Violin plot
-        parts = ax.violinplot(data, showmeans=False, showmedians=True, showextrema=True)
-        for pc in parts['bodies']:
-            pc.set_facecolor('#9999ff')
-            pc.set_edgecolor('black')
-            pc.set_alpha(0.5)
-        if 'cmedians' in parts:
-            parts['cmedians'].set_color('black')
-            parts['cmedians'].set_linewidth(1.5)
-
-        # Labels and formatting
-        ax.set_xticks(range(1, len(group_labels)+1))
-        ax.set_xticklabels(group_labels, rotation=45, ha='right')
-        ax.set_xlabel(group_column)
-        ax.set_ylabel(value_column)
-        ax.set_title(value_column)
-        ax.grid(True, linestyle='--', alpha=0.3)
-
-        # Thresholds
-        if isinstance(thresholds, Thresholds):
-            thresholds.draw(ax, value_column)
-
-        ax.legend(loc="upper right", fontsize=8, frameon=False)
-
-    # Remove unused axes
-    for j in range(len(value_columns), nrows*ncols):
-        fig.delaxes(axes[j // ncols, j % ncols])
-
-    fig.suptitle(title, fontsize=16)
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
-
-    if pngfile:
-        plt.savefig(pngfile, dpi=300, bbox_inches='tight')
-    else:
-        plt.show()
-    plt.close(fig)
 
 
 def plot_kde_plotly_simple(df, value_column, group_column, htmlfile, title=""):
