@@ -371,11 +371,12 @@ def writeExcel_epa(output_file, model_json,
 
     stats = model_json["info"].get("Stats",{})
     metadata = [
-        ("Property Name", model_json["results_name"][0]),
-        ("Property Description", model_json["results_name"][0]),
+        ("Property Name", pred_value),
+        ("Property Description",  "; ".join(model_json["results_name"])),
         ("Dataset Name", key),
         ("Dataset Description", name),
         ("Property Units",  model_json["info"].get("units",None)),
+        ("Experimental",  exp_value),
         ("nTraining",  stats.get("n_Train", None if training_df is None else training_df.shape[0])),
         ("nTEST", stats.get("n_Test", None if test_df is None else test_df.shape[0]))
         #  ("Model version", version),
