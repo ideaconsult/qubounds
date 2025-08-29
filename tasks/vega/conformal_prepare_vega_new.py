@@ -96,7 +96,7 @@ def prepare_regression(vega_list_models, folder_path):
             match = re.search(r"\[(.*?)\]", experimental_column)
             _exp_unit = match.group(1) if match else None
             # they have mg/L and mg/l in the same file ...
-            assert _exp_unit.to_lower() == main_unit.to_lower()
+            assert _exp_unit.lower() == main_unit.lower()
 
         status_index = df_ts.columns.get_loc('Status')
         last_col = df_ts.columns[status_index + 1]
@@ -146,9 +146,9 @@ Path(product["classification"]).mkdir(parents=True, exist_ok=True)
 
 vega_list_models = pd.read_excel(upstream["vega_list_models"]["data"])
 print(vega_list_models.shape)
-_tmp = vega_list_models.loc[vega_list_models["Key"] == "FISH_KNN"]
-_tmp
+#_tmp = vega_list_models.loc[vega_list_models["Key"] == "FISH_KNN"]
+#_tmp
 
-#prepare_regression(vega_list_models, folder_path=Path(reports))
-prepare_regression(_tmp, folder_path=Path(reports))
+prepare_regression(vega_list_models, folder_path=Path(reports))
+#prepare_regression(_tmp, folder_path=Path(reports))
 
