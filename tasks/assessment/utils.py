@@ -130,6 +130,7 @@ def fuzzy_memberships_from_interval(
 
 
 def clean_set_tags(df, column="tag", tags=[]):
+    df[column] = df[column].astype(str)
     for tag in tags:
         df.loc[df[column].str.contains(tag, na=False, regex=False), column] = tag
     return df
