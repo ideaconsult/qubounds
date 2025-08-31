@@ -17,7 +17,8 @@ def take_first_predicted_col(model):
     return model in ["EW_TOXICITY", "BCF_MEYLAN"]
 
 
-def get_main_prediction(model, predicted_columns):
+# pay attention to exp columns when coming from test set or report - they are not encoded/encoded!
+def get_main_prediction_smthwrong(model, predicted_columns):
     print("predicted_columns", predicted_columns)
     main_predicted_column = None
     main_unit = None
@@ -37,6 +38,14 @@ def get_main_prediction(model, predicted_columns):
                 main_unit = _unit
                 main_index = index
     return main_predicted_column, main_unit, main_index
+
+
+def get_main_prediction(model, predicted_columns):
+    print("predicted_columns", predicted_columns)
+    main_predicted_column = predicted_columns[0]
+    match = re.search(r"\[(.*?)\]", main_predicted_column)
+    main_unit = match.group(1) if match else None
+    return main_predicted_column, main_unit, 0
 
 
 def prepare_regression(vega_list_models, folder_path):
@@ -108,8 +117,8 @@ def prepare_regression(vega_list_models, folder_path):
 
         if 'CAS' not in df_ts.columns:
             df_ts['CAS'] = None        
-        #merged = pd.merge(df, df_ts[["ID", "Status", "CAS", last_col]], on='ID', how='left')
-        merged = pd.merge(df, df_ts[["ID", "Status", "CAS"]], on='ID', how='left')
+        merged = pd.merge(df, df_ts[["ID", "Status", "CAS", last_col]], on='ID', how='left')
+        #merged = pd.merge(df, df_ts[["ID", "Status", "CAS"]], on='ID', how='left')
 
         print(model, merged.columns)
         model_json = { 
@@ -118,7 +127,7 @@ def prepare_regression(vega_list_models, folder_path):
                     "name": row.Name, 
                     "version": row.Version,
                     "units": main_unit,
-                    "Experimental" : experimental_column,
+                    "Experimental" : last_col,
                     }, 
             "training_dataset": []}
         _col_d = "Descriptors range check"
@@ -134,7 +143,7 @@ def prepare_regression(vega_list_models, folder_path):
             os.path.join(product[model_type], f"{model}.xlsx"),
             model_json,
             pred_value=main_column,
-            exp_value=experimental_column,
+            exp_value=last_col,
             df=merged,
             adi_columns=get_adi_cols(),
             software="VEGA_NEW"
