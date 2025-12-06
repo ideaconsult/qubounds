@@ -138,10 +138,10 @@ def clean_set_tags(df, column="tag", tags=[]):
     return df
 
 
-def init_logging(log_dir):
+def init_logging(log_dir, log_file="assessment.log"):
     # Setup logging
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "assessment.log"
+    log_file = log_dir / log_file
 
     logging.basicConfig(
         level=logging.INFO,
