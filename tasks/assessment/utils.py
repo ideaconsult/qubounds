@@ -1,5 +1,7 @@
 import pandas as pd
 from typing import List, Tuple
+import logging
+import sys
 
 
 def prepare_properties(df_long, possible_props, id_cols=['No.', 'ID', 'Smiles'], class_props=[]):
@@ -134,3 +136,19 @@ def clean_set_tags(df, column="tag", tags=[]):
     for tag in tags:
         df.loc[df[column].str.contains(tag, na=False, regex=False), column] = tag
     return df
+
+
+def init_logging(log_dir):
+    # Setup logging
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "assessment.log"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    return logging.getLogger(__name__)
