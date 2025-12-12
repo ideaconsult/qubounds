@@ -6,6 +6,18 @@ meta:
 tasks:
 
   - source: tasks/mapie.py
-    name: "mapie"
+    name: "mapie_[[data]]"
     product: 
-      nb: "products/mapie.ipynb"
+      nb: "products/mapie/vega/regression/[[data]]/mapie.ipynb"
+      #data: "products/conformal/vega/regression/[[ncm]]/[[data]]/conformal.xlsx"
+      #ncmodel: "products/conformal/vega/regression/[[ncm]]/[[data]]/conformal.pkl"
+    params:
+      input_folder: "products/vega/regression"
+      alpha: 0.1
+      calculate_coverage_metrics: True
+      id: "Smiles"
+      cache_path: "products/ecfp4_cache.db"
+      skip_existing: True
+    grid:
+      data: ["BCF_MEYLAN", "LOGP_MEYLAN"]
+ 

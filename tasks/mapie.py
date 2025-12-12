@@ -1,13 +1,23 @@
-# + tags=["parameters"]
-# add default values for parameters here
-# -
-
+import os.path
 import numpy as np
 import pandas as pd
 from mapie.regression import SplitConformalRegressor
 from mapie.conformity_scores import ResidualNormalisedScore
 from sklearn.base import RegressorMixin
 from sklearn.utils.validation import check_is_fitted
+from tasks.descriptors.ecfp import init_cache
+from tasks.descriptors.ecfp import smiles_to_ecfp_cached
+
+
+# + tags=["parameters"]
+input_folder = None
+data = None
+alpha = 0.1
+cache_path = None
+# -
+
+
+conn = init_cache(cache_path)
 
 # --- 1. Define the Proxy Model (Same as before) ---
 class PrecalculatedPredictor(RegressorMixin):
@@ -20,31 +30,34 @@ class PrecalculatedPredictor(RegressorMixin):
         # X[:, 0] holds the point prediction (ŷ)
         return X[:, 0].flatten() 
 
-# --- 2. Prepare Simulated Data with Auxillary Info (Sigma) ---
+# --- 2. Prepare data ---
 
-N_CAL = 100
+
+input_file = os.path.join(input_folder, f"{data}.xlsx")
+calibration_df = pd.read_excel(input_file, sheet_name=data)
+calibration_df.head()
+
+
+N_CAL = calibration_df.shape[0]
 N_TEST = 10
-np.random.seed(123)
 
-y_cal = 10 + 2 * np.random.randn(N_CAL)  # True values
+y_cal = calibration_df["Exp"].values
 
 # Simulate the two pieces of information we have for each point:
-y_pred_cal = y_cal + np.random.randn(N_CAL) # ŷ (Point Prediction)
-# Simulate the pre-calculated local standard deviation (our 'sigma' prediction)
-sigma_pred_cal = 0.5 + 0.1 * np.random.rand(N_CAL) 
+y_pred_cal = calibration_df[data].values
 
 # Combine them into the single input matrix X (Features now have 2 columns!)
 # X = [ [ŷ1, σ1], [ŷ2, σ2], ... ]
-X_cal = np.vstack([y_pred_cal, sigma_pred_cal]).T 
+#X_cal = np.vstack([y_pred_cal, sigma_pred_cal]).T
+X_cal = np.array([smiles_to_ecfp_cached(sm) for sm in calibration_df["Smiles"]])
 
 # Simulate Test Data
 y_pred_test = y_pred_cal[:N_TEST] 
-sigma_pred_test = sigma_pred_cal[:N_TEST]
-X_test = np.vstack([y_pred_test, sigma_pred_test]).T
+X_test = X_cal[:N_TEST] 
 
 # --- 3. Initialize and Conformalize with ResidualNormalisedScore ---
 
-confidence_level = 0.90 
+confidence_level = 1- alpha 
 
 mapie_calibrator = SplitConformalRegressor(
     estimator=PrecalculatedPredictor(),
