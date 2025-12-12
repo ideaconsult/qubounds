@@ -7,7 +7,7 @@ from sklearn.base import RegressorMixin
 from sklearn.utils.validation import check_is_fitted
 from sklearn.neighbors import KNeighborsRegressor
 from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
-from tasks.mapie_utils import train_conformal, predict_conformal
+from tasks.mapie_regression import train_conformal, predict_conformal
 
 
 # + tags=["parameters"]
