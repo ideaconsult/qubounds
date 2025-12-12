@@ -9,8 +9,8 @@ tasks:
     name: "mapie_[[data]]"
     product: 
       nb: "products/mapie/vega/regression/[[data]]/mapie.ipynb"
-      #data: "products/conformal/vega/regression/[[ncm]]/[[data]]/conformal.xlsx"
-      #ncmodel: "products/conformal/vega/regression/[[ncm]]/[[data]]/conformal.pkl"
+      data: "products/mapie/vega/regression/[[data]]/mapie.xlsx"
+      ncmodel: "products/mapie/vega/regression/[[data]]/mapie.pkl"
     params:
       input_folder: "products/vega/regression"
       alpha: 0.1
