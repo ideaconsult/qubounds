@@ -1,0 +1,11 @@
+executor: serial
+
+meta:
+    extract_upstream: False
+
+tasks:
+
+  - source: tasks/mapie.py
+    name: "mapie"
+    product: 
+      nb: "products/mapie.ipynb"
