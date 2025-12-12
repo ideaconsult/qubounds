@@ -16,7 +16,7 @@ tasks:
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
-      cache_path: "products/ecfp4_cache.db"
+      cache_path: "products/mapie/ecfp4_cache.db"
       skip_existing: True
     grid:
       data: ["BCF_MEYLAN", "LOGP_MEYLAN"]
