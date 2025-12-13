@@ -1,12 +1,7 @@
 import os.path
 import numpy as np
 import pandas as pd
-from mapie.regression import SplitConformalRegressor
-from mapie.conformity_scores import ResidualNormalisedScore
-from sklearn.base import RegressorMixin
-from sklearn.utils.validation import check_is_fitted
-from sklearn.neighbors import KNeighborsRegressor
-from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+from tasks.descriptors.ecfp import init_cache
 from tasks.mapie_regression import train_conformal, predict_conformal, clean_regrdataset
 
 

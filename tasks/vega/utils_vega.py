@@ -9,6 +9,7 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import chardet
 import ast
 from tasks.assessment.thresholds import Thresholds
+import re
 
 
 def load_vega_models(file_vega_models, model):
@@ -513,3 +514,11 @@ def replace_labels_with_keys(df, column, classvalues_dict):
     df[f'{column}_numeric'] = df[column].map(inverse_dict)
 
     return df, f'{column}_numeric'
+
+
+def get_main_prediction(model, predicted_columns):
+    print("predicted_columns", predicted_columns)
+    main_predicted_column = predicted_columns[0]
+    match = re.search(r"\[(.*?)\]", main_predicted_column)
+    main_unit = match.group(1) if match else None
+    return main_predicted_column, main_unit, 0

@@ -1,4 +1,4 @@
-executor: serial
+executor: parallel
 
 meta:
     extract_upstream: False
@@ -17,7 +17,7 @@ tasks:
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: True
+      skip_existing: False
     grid:
       data: "{{vega_regr}}"
  
@@ -34,8 +34,42 @@ tasks:
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: True
+      skip_existing: False
       vega_models: "resources/vega_models_withclasses.xlsx"      
     grid:
-      data: ["ALGAE_COMBASECLASS"]
+      #data: ["ALGAE_COMBASECLASS"]
+      data: "{{vega_class}}"
+
+
+
+  - source: tasks/conformal_regression_summary.py
+    name: "regression_summary_mapie"
+    upstream: ["mapie_*"]
+    product: 
+      nb: "products/mapie/vega/regression/summary.ipynb"
+      data: "products/mapie/vega/regression/summary.xlsx"        
+
+  - source: tasks/conformal_classification_summary.py
+    name: "classification_summary_mapie"
+    upstream: ["mapiec_*"]
+    product: 
+      nb: "products/mapie/vega/class_ordinal/summary.ipynb"
+      data: "products/mapie/vega/class_ordinal/summary.xlsx"              
+
+
+  - source: tasks/mapie_apply.py
+    name: "mapier_apply_[[input_key]]_[[data]]_[[ncm_code]]"
+    #upstream: ["regression_summary_mapie"]
+    upstream: []
+    product: 
+      nb: "{{VEGA_CP_OUTPUT}}/[[input_key]]//regression/notebook_[[data]]_[[ncm_code]].ipynb"
+      results: "{{VEGA_CP_OUTPUT}}/[[input_key]]/regression/report_cp_[[data]]_[[ncm_code]].xlsx"
+    params:
+      config: "{{config}}"
+      cache_path: "products/ecfp4_cache.db"
+      ncmodel: "products/mapie/vega/regression/{data}/*.pkl"
+    grid:
+      data: ["BCF_MEYLAN"] #, "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN"]
       #data: "{{vega_regr}}"
+      input_key: "{{input_key}}"
+      ncm_code: ["knnecfp"]        

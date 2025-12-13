@@ -1,7 +1,6 @@
 import pandas as pd
-import ast
-import math
-from collections import Counter
+import pandas as pd
+import matplotlib.pyplot as plt
 
 
 # + tags=["parameters"]
@@ -36,4 +35,40 @@ combined_df['Relative Interval Width'] = combined_df['Average Interval Width'] /
 combined_df.to_excel(product["data"], index=False)        
 
 
-combined_df.sort_values(by=['Relative Interval Width'], ascending=True).head(25)
+#combined_df.sort_values(by=['Relative Interval Width'], ascending=True).head(25)
+
+def plotsummary(df):
+    # Create a color map for endpoints
+    endpoints = df['Endpoint'].unique()
+    colors = plt.cm.tab20.colors  # Up to 20 distinct colors
+    color_map = {ep: colors[i % len(colors)] for i, ep in enumerate(endpoints)}
+
+    # Scatter plot
+    plt.figure(figsize=(8,6))
+    for ep in endpoints:
+        subset = df[df['Endpoint'] == ep]
+        plt.scatter(
+            subset['Empirical coverage'],
+            subset['Relative Interval Width'],
+            color=color_map[ep],
+            alpha=0.8,
+            s=60,
+            label=ep
+        )
+
+    # Add nominal coverage line
+    plt.axvline(x=0.9, color='red', linestyle='--', label='Nominal coverage 0.9')
+
+    # Labels, title
+    plt.xlabel('Empirical Coverage')
+    plt.ylabel('Relative Interval Width')
+    plt.title('Conformal Prediction: Coverage vs. Interval Width Across Endpoints')
+
+    # Legend
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+
+    plt.tight_layout()
+    plt.show()
+
+
+plotsummary(combined_df)
