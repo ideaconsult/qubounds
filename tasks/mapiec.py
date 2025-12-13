@@ -34,14 +34,19 @@ def get_clas_values(vega_models):
 
 
 def clean_classdataset(df, model=None, classvalues_dict=None):
-    values_to_drop = ["Not Classifiable", "Not classifiable",
-                        "Not Classifiable", "Unknown", "", 
+    values_to_drop = ["Not Classifiable", 
+                        "Not classifiable",
+                        "Not classifiable", "Unknown", "", 
                         "N.A.", "No class found",
-                        "Non Predicted", "NA", "-", np.nan]
+                        "Non Predicted",
+                        "Not predicted", "NA", "-", np.nan]
+    # values_to_drop = []    
+    print(df[model].unique())
     cleaned_df = df[~df[model].isin(values_to_drop)]
     print("Drop not classifiable", df.shape, cleaned_df.shape)
     cleaned_df, label_pred = replace_labels_with_keys(
-        cleaned_df, model, classvalues_dict)    
+        cleaned_df, model, classvalues_dict) 
+    print(cleaned_df[label_pred].unique())   
     return cleaned_df, label_pred
 
 
