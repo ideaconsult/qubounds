@@ -20,7 +20,7 @@ skip_existing = None
 # -
 
 
-if skip_existing and os.path.exists(product["ncmodel"]):
+if skip_existing and os.path.exists(product["ncmodel"]) and os.path.exists(product["data"]):
     print(f"CP model exists {product['ncmodel']}")
     pass
 else:

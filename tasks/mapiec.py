@@ -50,7 +50,7 @@ def clean_classdataset(df, model=None, classvalues_dict=None):
     return cleaned_df, label_pred
 
 
-if skip_existing and os.path.exists(product["ncmodel"]):
+if skip_existing and os.path.exists(product["ncmodel"]) and os.path.exists(product["ncmodel"]):
     print(f"CP model exists {product['ncmodel']}")
     pass
 else:
