@@ -36,6 +36,7 @@ test_df = pd.read_excel(input_file, sheet_name=data)
 
 result_df, metrics_per_model = predict_conformal(
     test_df, pred_column=data,
+    true_column="Exp",
     model_path=product["ncmodel"],
     tag=data
 )
