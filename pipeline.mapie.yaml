@@ -19,5 +19,23 @@ tasks:
       cache_path: "products/mapie/ecfp4_cache.db"
       skip_existing: True
     grid:
-      data: ["BCF_MEYLAN", "LOGP_MEYLAN"]
+      data: "{{vega_regr}}"
  
+
+  - source: tasks/mapiec.py
+    name: "mapiec_[[data]]"
+    product: 
+      nb: "products/mapie/vega/class_ordinal/[[data]]/mapie.ipynb"
+      data: "products/mapie/vega/class_ordinal/[[data]]/mapie.xlsx"
+      ncmodel: "products/mapie/vega/class_ordinal/[[data]]/mapie.pkl"
+    params:
+      input_folder: "products/vega/classification"
+      alpha: 0.1
+      calculate_coverage_metrics: True
+      id: "Smiles"
+      cache_path: "products/mapie/ecfp4_cache.db"
+      skip_existing: True
+      vega_models: "resources/vega_models_withclasses.xlsx"      
+    grid:
+      data: ["ALGAE_COMBASECLASS"]
+      #data: "{{vega_regr}}"
