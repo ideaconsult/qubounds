@@ -7,7 +7,7 @@ from sklearn.base import RegressorMixin
 from sklearn.utils.validation import check_is_fitted
 from sklearn.neighbors import KNeighborsRegressor
 from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
-from tasks.mapie_regression import train_conformal, predict_conformal
+from tasks.mapie_regression import train_conformal, predict_conformal, clean_regrdataset
 
 
 # + tags=["parameters"]
@@ -38,6 +38,7 @@ else:
     )
 
     test_df = pd.read_excel(input_file, sheet_name=data)
+    test_df = clean_regrdataset(test_df, data)
 
     result_df, metrics_per_model = predict_conformal(
         test_df, pred_column=data,
