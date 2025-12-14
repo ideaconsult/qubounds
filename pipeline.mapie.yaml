@@ -1,4 +1,4 @@
-executor: parallel
+executor: serial
 
 meta:
     extract_upstream: False
@@ -6,20 +6,21 @@ meta:
 tasks:
 
   - source: tasks/mapie.py
-    name: "mapie_[[data]]"
+    name: "mapie_[[data]]_[[ncm]]"
     product: 
-      nb: "products/mapie/vega/regression/[[data]]/mapie.ipynb"
-      data: "products/mapie/vega/regression/[[data]]/mapie.xlsx"
-      ncmodel: "products/mapie/vega/regression/[[data]]/mapie.pkl"
+      nb: "products/mapie/vega/regression/[[ncm]]/[[data]]/mapie.ipynb"
+      data: "products/mapie/vega/regression/[[ncm]]/[[data]]/mapie.xlsx"
+      ncmodel: "products/mapie/vega/regression/[[ncm]]/[[data]]/mapie.pkl"
     params:
       input_folder: "products/vega/regression"
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: False
+      skip_existing: True
     grid:
       data: "{{vega_regr}}"
+      ncm: ["knnecfp", "rfecfp", "gbecfp","rnrecfp"]
  
 
   - source: tasks/mapiec.py
@@ -59,17 +60,18 @@ tasks:
 
   - source: tasks/mapie_apply.py
     name: "mapier_apply_[[input_key]]_[[data]]_[[ncm_code]]"
-    #upstream: ["regression_summary_mapie"]
-    upstream: []
+    upstream: ["regression_summary_mapie"]
+    #upstream: []
     product: 
       nb: "{{VEGA_CP_OUTPUT}}/[[input_key]]//regression/notebook_[[data]]_[[ncm_code]].ipynb"
       results: "{{VEGA_CP_OUTPUT}}/[[input_key]]/regression/report_cp_[[data]]_[[ncm_code]].xlsx"
     params:
       config: "{{config}}"
       cache_path: "products/ecfp4_cache.db"
-      ncmodel: "products/mapie/vega/regression/{data}/*.pkl"
+      ncmodel: "products/mapie/vega/regression/{ncm_code}/{data}/*.pkl"
+      skip_existing: True
     grid:
-      data: ["BCF_MEYLAN"] #, "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN"]
+      data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
       #data: "{{vega_regr}}"
       input_key: "{{input_key}}"
-      ncm_code: ["knnecfp"]        
+      ncm_code: ["rfecfp"]        

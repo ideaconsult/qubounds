@@ -8,6 +8,7 @@ from tasks.vega.utils_vega import (
     get_main_prediction)
 from tasks.assessment.utils import init_logging
 import traceback
+import time
 from pathlib import Path
 import glob
 
@@ -20,6 +21,7 @@ product = None
 data = None
 input_key = None
 ncm_code = None
+skip_existing = None
 # -
 
 
@@ -51,38 +53,44 @@ for report_prefix in ["report_", "resultsw_"]:
 if input_file is None:
     pd.DataFrame().to_excel(product["results"], index=False, sheet_name="error")
 else:
-    logger.info(input_file)
-    df, metadata = load_vega_report(file=input_file)
-    logger.info(metadata)
-    logger.info(df.columns)
-    df, predicted_columns = clean_vega_report_df(df)
-    logger.info(predicted_columns)
-    main_column, main_unit, main_index = get_main_prediction(data, predicted_columns)    
-    logger.info(f"{main_column}, {main_unit}, {main_index}")
-    logger.info(f"*********** {df.columns}")
-    df = df[["ID", "Smiles", main_column]]
-    values_to_drop = ["-", np.nan]
-    df = df[~df[main_column].isin(values_to_drop)]    
-    result_df, metrics_per_model = predict_conformal(
-        df, pred_column=main_column,
-        true_column=None,
-        model_path=_ncmodel_path,
-        tag=data,
-        smiles_column="Smiles"
-    )
-
-    model_metrics = {}
-    model_metrics[data] = metrics_per_model
-    metrics_df = pd.DataFrame.from_dict(model_metrics, orient='index')
-    metrics_df.index.name = 'Method Name'
-    metrics_df["alpha"] = alpha
-    metrics_df
-
-    output_data_path = product["data"]
-    with pd.ExcelWriter(output_data_path, engine='xlsxwriter') as writer:
-        #for sheet in ['Cover sheet', 'Summary sheet']:
-        #    _df = pd.read_excel(input_file, sheet_name=sheet)
-        #    _df.to_excel(writer, sheet_name=sheet, index=False)        
-        if result_df is not None:
-            result_df.to_excel(writer, sheet_name='Prediction Intervals', index=False)        
-        metrics_df.to_excel(writer, sheet_name='Metrics') 
+    if skip_existing and os.path.exists(product["results"]):
+        logger.info(f"{data}\tCP results exists {product['results']}")
+    else:
+        logger.info(f"{data}\t{input_file}")
+        df, metadata = load_vega_report(file=input_file)
+        logger.debug(metadata)
+        logger.frbug(df.columns)
+        df, predicted_columns = clean_vega_report_df(df)
+        logger.debig(predicted_columns)
+        main_column, main_unit, main_index = get_main_prediction(data, predicted_columns)    
+        logger.info(f"{data}\t{main_column}, {main_unit}, {main_index}")
+        logger.debug(f"*********** {df.columns}")
+        df = df[["ID", "Smiles", main_column]]
+        values_to_drop = ["-", np.nan]
+        df = df[~df[main_column].isin(values_to_drop)]    
+        logger.debug("{data}\tpredict_conformal start")
+        start_time = time.time()
+        result_df, metrics_per_model = predict_conformal(
+            df, pred_column=main_column,
+            true_column="Experimental",
+            model_path=_ncmodel_path,
+            tag=data,
+            smiles_column="Smiles",
+            chunk_size=50000
+        )
+        elapsed_time = time.time() - start_time
+        logger.debug(f"{data}\tpredict_conformal end (elapsed: {elapsed_time:.2f}s)")
+        model_metrics = {}
+        model_metrics[data] = metrics_per_model
+        metrics_df = pd.DataFrame.from_dict(model_metrics, orient='index')
+        metrics_df.index.name = 'Method Name'
+        metrics_df["alpha"] = alpha
+        output_data_path = product["results"]
+        logger.info(f"{data}\tWriting results to {output_data_path}")        
+        with pd.ExcelWriter(output_data_path, engine='xlsxwriter') as writer:
+            #for sheet in ['Cover sheet', 'Summary sheet']:
+            #    _df = pd.read_excel(input_file, sheet_name=sheet)
+            #    _df.to_excel(writer, sheet_name=sheet, index=False)        
+            if result_df is not None:
+                result_df.to_excel(writer, sheet_name='Prediction Intervals', index=False)        
+            metrics_df.to_excel(writer, sheet_name='Metrics') 

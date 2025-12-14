@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 from tasks.descriptors.ecfp import init_cache
 from tasks.mapie_regression import train_conformal, predict_conformal, clean_regrdataset
+from tasks.assessment.utils import init_logging
+from pathlib import Path
 
 
 # + tags=["parameters"]
@@ -12,11 +14,14 @@ alpha = 0.1
 cache_path = None
 product = None
 skip_existing = None
+ncm = None
 # -
 
 
+logger = init_logging(Path(product["nb"]).parent / "logs", "report.log")
+
 if skip_existing and os.path.exists(product["ncmodel"]) and os.path.exists(product["data"]):
-    print(f"CP model exists {product['ncmodel']}")
+    logger.info(f"{data}\tCP model exists {product['ncmodel']}")
     pass
 else:
     conn = init_cache(cache_path)
@@ -29,7 +34,8 @@ else:
         sheet_name=data,
         cache_path=cache_path,
         alpha=0.1,
-        output_model_path=product["ncmodel"]
+        output_model_path=product["ncmodel"],
+        ncm=ncm
     )
 
     test_df = pd.read_excel(input_file, sheet_name=data)
@@ -58,4 +64,4 @@ else:
             result_df.to_excel(writer, sheet_name='Prediction Intervals', index=False)        
         metrics_df.to_excel(writer, sheet_name='Metrics') 
 
-    print(f"\n✓ Results saved to {product["data"]}")
+    logger.info(f"{data}\tResults saved to {product["data"]}✓")

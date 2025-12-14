@@ -10,7 +10,9 @@ import chardet
 import ast
 from tasks.assessment.thresholds import Thresholds
 import re
+import logging
 
+logger = logging.getLogger(__name__)
 
 def load_vega_models(file_vega_models, model):
     df_models = pd.read_excel(file_vega_models, engine="openpyxl")
