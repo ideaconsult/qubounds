@@ -71,7 +71,20 @@ tasks:
       ncmodel: "products/mapie/vega/regression/{ncm_code}/{data}/*.pkl"
       skip_existing: True
     grid:
-      data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
-      #data: "{{vega_regr}}"
+      #data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
+      data: "{{vega_regr}}"
       input_key: "{{input_key}}"
       ncm_code: ["rfecfp"]        
+
+
+  - source: tasks/solr/chemicals.py
+    name: "chemicals_[[input_key]]"
+    upstream: []
+    product: 
+      nb: "{{VEGA_CP_OUTPUT}}/[[input_key]]//chemicals.ipynb"
+      results: "{{VEGA_CP_OUTPUT}}/[[input_key]]/chemicals.json"
+    params:
+      config: "{{config}}"
+      cache_path: "products/ecfp4_cache.db"
+    grid:
+      input_key: "{{input_key}}"
