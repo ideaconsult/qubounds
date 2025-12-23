@@ -4,9 +4,13 @@ from rdkit.Chem import AllChem, inchi
 import sqlite3
 import numpy as np
 import threading
+import logging 
+
 
 _conn_lock = threading.Lock()
 _cached_conn = None
+
+logger = logging.getLogger(__name__)
 
 def init_cache(db_path="ecfp_cache.db"):
     global _cached_conn

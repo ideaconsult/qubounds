@@ -39,9 +39,13 @@ def prepare_properties(df_long, possible_props, id_cols=['No.', 'ID', 'Smiles'],
         df_wide = unique_chems
 
     for class_prop in class_props:
-        df_biodeg = df_long.loc[df_long["Property"] == class_prop][['No.', 'ID', 'Smiles',"Top_Label", "Fuzzy_Scores"]]
+        cols = ['No.', 'ID', 'Smiles']
+        if "Top_Label" in df_long.columns and "Fuzzy_Scores" in df_long.columns:
+            cols = ['No.', 'ID', 'Smiles',"Top_Label", "Fuzzy_Scores"]
+        df_biodeg = df_long.loc[df_long["Property"] == class_prop][cols]
         df_wide = df_wide.merge(df_biodeg, on=['No.', 'ID', 'Smiles'], how='outer')
-        df_wide.rename(columns={"Top_Label": class_prop, "Fuzzy_Scores" : f"{class_prop}_score"}, inplace=True)
+        if "Top_Label" in df_wide.columns and "Fuzzy_Scores" in df_wide.columns:
+            df_wide.rename(columns={"Top_Label": class_prop, "Fuzzy_Scores" : f"{class_prop}_score"}, inplace=True)
 
     return df_wide
 
