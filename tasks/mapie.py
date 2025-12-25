@@ -19,7 +19,6 @@ ncm = None
 
 
 logger = init_logging(Path(product["nb"]).parent / "logs", "report.log")
-
 if skip_existing and os.path.exists(product["ncmodel"]) and os.path.exists(product["data"]):
     logger.info(f"{data}\tCP model exists {product['ncmodel']}")
     pass
@@ -47,14 +46,32 @@ else:
         model_path=product["ncmodel"],
         tag=data
     )
-
     model_metrics = {}
     model_metrics[data] = metrics_per_model
     metrics_df = pd.DataFrame.from_dict(model_metrics, orient='index')
     metrics_df.index.name = 'Method Name'
     metrics_df["alpha"] = alpha
-    metrics_df
+    metrics_df["Split"] = "Test"
 
+    train_meta = pd.read_excel(input_file, sheet_name="Cover sheet", header=None)
+    experimental_tag = train_meta.loc[train_meta[0] == "Experimental", 1].values[0]
+    predicted_tag = train_meta.loc[train_meta[0] == "Property Name", 1].values[0]
+    train_df = pd.read_excel(input_file, sheet_name="Training")
+    train_df = clean_regrdataset(train_df[["ID", "Smiles", predicted_tag, experimental_tag]], predicted_tag)
+    train_result_df, train_metrics_per_model = predict_conformal(
+        train_df, pred_column=predicted_tag,
+        true_column=experimental_tag,
+        model_path=product["ncmodel"],
+        tag=data
+    )
+    model_metrics = {}
+    model_metrics[data] = train_metrics_per_model
+    _metrics_df = pd.DataFrame.from_dict(model_metrics, orient='index')
+    _metrics_df.index.name = 'Method Name'
+    _metrics_df["alpha"] = alpha
+    _metrics_df["Split"] = "Training"
+    logger.info(train_metrics_per_model)
+    metrics_df = pd.concat([metrics_df, _metrics_df])
     output_data_path = product["data"]
     with pd.ExcelWriter(output_data_path, engine='xlsxwriter') as writer:
         for sheet in ['Cover sheet', 'Summary sheet']:
@@ -62,6 +79,8 @@ else:
             _df.to_excel(writer, sheet_name=sheet, index=False)        
         if result_df is not None:
             result_df.to_excel(writer, sheet_name='Prediction Intervals', index=False)        
+        if train_result_df is not None:            
+            train_result_df.to_excel(writer, sheet_name='Training PI', index=False)        
         metrics_df.to_excel(writer, sheet_name='Metrics') 
 
     logger.info(f"{data}\tResults saved to {product["data"]}✓")
