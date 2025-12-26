@@ -7,6 +7,7 @@ from tasks.mapie_regression import (
 )
 from tasks.assessment.utils import init_logging
 from pathlib import Path
+from sklearn.model_selection import train_test_split
 
 
 # + tags=["parameters"]
@@ -32,13 +33,24 @@ else:
     df_calibration = pd.read_excel(input_file, sheet_name=data)
     df_calibration = clean_regrdataset(df_calibration, data)
 
-    train_meta = pd.read_excel(input_file, sheet_name="Cover sheet", header=None)
-    experimental_tag = train_meta.loc[train_meta[0] == "Experimental", 1].values[0]
-    predicted_tag = train_meta.loc[train_meta[0] == "Property Name", 1].values[0]
-    train_df = pd.read_excel(input_file, sheet_name="Training")
-    train_df = clean_regrdataset(train_df[["ID", "Smiles", predicted_tag, experimental_tag]], predicted_tag)
+    if data in ["LOGP_MEYLAN", "LOGP_ALOGP", "LOGP_MLOGP", "BCF_ARNOTGOBAS",
+                "KOA_OPERA", "KOC_OPERA", "SLUDGE_COMBASEEC50", "TOTALHL_QSARINS"]:
+        # we don't have a test set here !
+        experimental_tag = "Exp"
+        predicted_tag = data        
+        train_df, df_calibration = train_test_split(df_calibration, test_size=0.2, random_state=42)
+        train_df["residuals"] = np.abs(train_df[experimental_tag].astype(float) - train_df[predicted_tag].astype(float))
+    else:
+        train_meta = pd.read_excel(input_file, sheet_name="Cover sheet", header=None)
+        experimental_tag = train_meta.loc[train_meta[0] == "Experimental", 1].values[0]
+        predicted_tag = train_meta.loc[train_meta[0] == "Property Name", 1].values[0]        
+        train_df = pd.read_excel(input_file, sheet_name="Training")
+        train_df = clean_regrdataset(train_df[["ID", "Smiles", predicted_tag, experimental_tag]], predicted_tag)
+        train_df["residuals"] = np.abs(train_df[experimental_tag].astype(float) - train_df[predicted_tag].astype(float))
 
     train_conformal_regression(
+        train_df[["Smiles", "residuals", experimental_tag]],
+        experimental_tag,
         df_calibration,
         sheet_name=data,
         cache_path=cache_path,
@@ -54,7 +66,8 @@ else:
         test_df, pred_column=data,
         true_column="Exp",
         model_path=product["ncmodel"],
-        tag=data
+        tag=data,
+        split="Test"
     )
     model_metrics = {}
     model_metrics[data] = metrics_per_model
@@ -67,7 +80,9 @@ else:
         train_df, pred_column=predicted_tag,
         true_column=experimental_tag,
         model_path=product["ncmodel"],
-        tag=data
+        tag=data,
+        split="Training"
+        
     )
     model_metrics = {}
     model_metrics[data] = train_metrics_per_model
@@ -88,4 +103,4 @@ else:
             train_result_df.to_excel(writer, sheet_name='Training PI', index=False)        
         metrics_df.to_excel(writer, sheet_name='Metrics') 
 
-    logger.info(f"{data}\tResults saved to {product["data"]}✓")
+    logger.info(f"{data}\tResults saved to {product["data"]}")

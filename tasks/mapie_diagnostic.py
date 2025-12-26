@@ -4,6 +4,7 @@ import logging
 from sklearn.neighbors import KNeighborsRegressor, RadiusNeighborsRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
+import matplotlib.pyplot as plt
 
 
 logger = logging.getLogger(__name__)
@@ -291,3 +292,108 @@ def sigma_diagnostics(y_true, y_pred):
         "median_pred": np.median(y_pred),
         "p90_pred": np.quantile(y_pred, 0.9),
     }
+
+
+def plot_normalized_residuals(
+    scores_cal,
+    scores_train=None,
+    scores_test=None,
+    bins="auto",
+    log_scale=False,
+    title="Normalized residual distributions",
+    confidence_score=0.9
+):
+    """
+    Plot distributions of normalized residuals S = |y - y_hat| / sigma_hat
+    """
+
+    #plt.figure(figsize=(7, 5))
+    plt.figure(figsize=(9, 4))
+
+    # Calibration
+    plt.hist(
+        scores_cal,
+        bins=bins,
+        density=True,
+        histtype="step",
+        linewidth=2,
+        label="Calibration"
+    )
+
+    # Train
+    if scores_train is not None:
+        plt.hist(
+            scores_train,
+            bins=bins,
+            density=True,
+            histtype="step",
+            linewidth=2,
+            label="Train"
+        )
+
+    # Test
+    if scores_test is not None:
+        plt.hist(
+            scores_test,
+            bins=bins,
+            density=True,
+            histtype="step",
+            linewidth=2,
+            label="Test"
+        )
+
+    q = np.quantile(scores_cal, confidence_score)
+    plt.axvline(q, linestyle="--", label=f"Calibration q at {confidence_score}")
+    #plt.xlim(0, np.quantile(scores_cal, 0.99))
+
+    if log_scale:
+        plt.yscale("log")
+
+    plt.xlabel(r"$|y - \hat y| / \hat\sigma(x)$")
+    plt.ylabel("Density")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_interval_widths(widths, bins="auto", title="", quantile=None):
+    plt.figure(figsize=(5, 3))
+    plt.hist(widths, bins=bins, density=True, histtype="step", linewidth=2)
+    if quantile is not None:
+        plt.axvline(x=quantile, color='r', linestyle='--', label='Conformal quantile')
+        plt.legend()
+    plt.xlabel("Prediction interval width")
+    plt.ylabel("Density")
+
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_prediction_intervals(result_df, model, n_points=100):
+    """
+    Plot predicted values and prediction intervals vs. the true target value.
+
+    Parameters:
+        result_df (pd.DataFrame): DataFrame containing true, predicted, and interval values.
+        model (str): Column prefix for the model (e.g., "rf", "xgb").
+        n_points (int): Number of points to plot (sampled randomly).
+    """
+    sample = result_df.sample(n=min(n_points, len(result_df)))
+    sample = sample.sort_values(by=f"{model}_true")
+
+    x = sample[f"{model}_true"]
+    y_pred = sample[f"{model}_pred"]
+    y_lower = sample[f"{model}_lower"]
+    y_upper = sample[f"{model}_upper"]
+
+    plt.figure()
+    plt.plot(x, y_pred, label="Predicted", marker='x', linestyle='', color='blue')
+    plt.fill_between(x, y_lower, y_upper, alpha=0.3, label="Prediction Interval", color='orange')
+    plt.plot(x, x, label="Ideal (y = x)", linestyle='--', color='gray')  # Optional y=x line
+    plt.xlabel("True Value")
+    plt.ylabel("Predicted Value / Interval")
+    plt.title(f"{model}: Prediction vs True with Conformal Intervals")
+    plt.legend()
+    plt.show()

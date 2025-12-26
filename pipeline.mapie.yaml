@@ -17,10 +17,11 @@ tasks:
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: True
+      skip_existing: False
     grid:
       data: "{{vega_regr}}"
-      ncm: ["knnecfp", "rfecfp", "gbecfp","rnrecfp"]
+      #ncm: ["knnecfp", "rfecfp", "gbecfp"]
+      ncm: ["rfecfp"]
  
 
   - source: tasks/mapiec.py
@@ -35,7 +36,7 @@ tasks:
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: False
+      skip_existing: True
       vega_models: "resources/vega_models_withclasses.xlsx"      
     grid:
       #data: ["ALGAE_COMBASECLASS"]

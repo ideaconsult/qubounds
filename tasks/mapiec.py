@@ -102,4 +102,4 @@ else:
             result_df.to_excel(writer, sheet_name='Prediction Intervals', index=False)        
         metrics_df.to_excel(writer, sheet_name='Metrics') 
 
-    print(f"\n✓ Results saved to {product["data"]}")
+    print(f"Results saved to {product["data"]}")
