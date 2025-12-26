@@ -1,6 +1,7 @@
 from scipy.stats import ks_2samp
 import numpy as np
 import logging
+from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.neighbors import KNeighborsRegressor, RadiusNeighborsRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
@@ -261,7 +262,7 @@ def make_sigma_model(ncm):
             n_estimators=100,
             random_state=42
         )
-
+    
     elif ncm == "rnrecfp":
         return RadiusNeighborsRegressor(
             radius=0.3,
@@ -397,3 +398,27 @@ def plot_prediction_intervals(result_df, model, n_points=100):
     plt.title(f"{model}: Prediction vs True with Conformal Intervals")
     plt.legend()
     plt.show()
+
+
+
+# Wrap σ-model to always return positive scale
+class PositiveSigmaWrapper(BaseEstimator, RegressorMixin):
+    def __init__(self, model=None, eps=1e-6):
+        self.model = model
+        self.eps = eps
+
+    def fit(self, X, y):
+        # Apply log internally
+        log_y = np.log(y + self.eps)
+        self.model.fit(X, log_y)
+        
+        # Forward fitted attributes for check_is_fitted
+        if hasattr(self.model, "n_features_in_"):
+            self.n_features_in_ = self.model.n_features_in_
+        if hasattr(self.model, "feature_names_in_"):
+            self.feature_names_in_ = self.model.feature_names_in_
+        
+        return self
+
+    def predict(self, X):
+        return np.exp(self.model.predict(X))

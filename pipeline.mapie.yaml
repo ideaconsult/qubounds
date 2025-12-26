@@ -1,4 +1,4 @@
-executor: serial
+executor: parallel
 
 meta:
     extract_upstream: False
@@ -19,9 +19,9 @@ tasks:
       cache_path: "products/mapie/ecfp4_cache.db"
       skip_existing: False
     grid:
+      ncm: ["rfecfp", "gbecfp", "knnecfp"]    
       data: "{{vega_regr}}"
       #ncm: ["knnecfp", "rfecfp", "gbecfp"]
-      ncm: ["rfecfp"]
  
 
   - source: tasks/mapiec.py
