@@ -25,7 +25,6 @@ for key_star in upstream:
         logger.info(f"{key_star}\t{key}\t{file_path}")
         if "Split" not in df.columns:
             df["Split"] = "Test"
-        df["source"] = "VEGA" if "vega" in key_star else "EPA"   
         _key = key.replace("conformal_external_regression_", "").replace("conformal_vega_regression_", "").replace("mapie_", "")
         df["Endpoint"] = _key
         meta = pd.read_excel(file_path, sheet_name="Summary sheet")
