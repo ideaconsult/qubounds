@@ -2,7 +2,9 @@ import os.path
 import numpy as np
 import pandas as pd
 from tasks.descriptors.ecfp import init_cache
-from tasks.mapie_regression import train_conformal, predict_conformal, clean_regrdataset
+from tasks.mapie_regression import (
+    train_conformal_regression, predict_conformal, clean_regrdataset
+)
 from tasks.assessment.utils import init_logging
 from pathlib import Path
 
@@ -27,9 +29,17 @@ else:
     np.random.seed(42)    
     # --- 3. Load Data ---
     input_file = os.path.join(input_folder, f"{data}.xlsx")
+    df_calibration = pd.read_excel(input_file, sheet_name=data)
+    df_calibration = clean_regrdataset(df_calibration, data)
 
-    train_conformal(
-        input_excel=input_file,
+    train_meta = pd.read_excel(input_file, sheet_name="Cover sheet", header=None)
+    experimental_tag = train_meta.loc[train_meta[0] == "Experimental", 1].values[0]
+    predicted_tag = train_meta.loc[train_meta[0] == "Property Name", 1].values[0]
+    train_df = pd.read_excel(input_file, sheet_name="Training")
+    train_df = clean_regrdataset(train_df[["ID", "Smiles", predicted_tag, experimental_tag]], predicted_tag)
+
+    train_conformal_regression(
+        df_calibration,
         sheet_name=data,
         cache_path=cache_path,
         alpha=0.1,
@@ -53,11 +63,6 @@ else:
     metrics_df["alpha"] = alpha
     metrics_df["Split"] = "Test"
 
-    train_meta = pd.read_excel(input_file, sheet_name="Cover sheet", header=None)
-    experimental_tag = train_meta.loc[train_meta[0] == "Experimental", 1].values[0]
-    predicted_tag = train_meta.loc[train_meta[0] == "Property Name", 1].values[0]
-    train_df = pd.read_excel(input_file, sheet_name="Training")
-    train_df = clean_regrdataset(train_df[["ID", "Smiles", predicted_tag, experimental_tag]], predicted_tag)
     train_result_df, train_metrics_per_model = predict_conformal(
         train_df, pred_column=predicted_tag,
         true_column=experimental_tag,
