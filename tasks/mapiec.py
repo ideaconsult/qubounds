@@ -5,6 +5,8 @@ from tasks.descriptors.ecfp import init_cache
 from tasks.mapie_class_ordinal import train_conformal_classifier, predict_conformal_classifier
 from tasks.vega.utils_vega import (
     replace_labels_with_keys, parse_classvalues)
+from tasks.assessment.utils import init_logging
+from pathlib import Path
 
 
 # + tags=["parameters"]
@@ -19,6 +21,7 @@ vega_models = None
 ncm = None
 # -
 
+logger = init_logging(Path(product["nb"]).parent / "logs", "report.log")
 
 def get_clas_values(vega_models):
     df_models = pd.read_excel(vega_models, engine="openpyxl")
@@ -26,10 +29,10 @@ def get_clas_values(vega_models):
     df_models.head(2)
     needs_fix = df_models['ClassValues'].astype(str).str.contains('Âµ').any()
     if needs_fix:
-        print("Column ClassValues contains garbled encoding — fixing...")
+        logger.info("Column ClassValues contains garbled encoding — fixing...")
         df_models['ClassValues'] = df_models['ClassValues'].str.replace('Âµ', 'µ', regex=False)
     classvalues_str = df_models.loc[df_models["Key"] == data, "ClassValues"].values[0]
-    print(classvalues_str)
+    logger.info(classvalues_str)
     classvalues_dict = parse_classvalues(classvalues_str)
     return classvalues_dict
 
@@ -42,12 +45,12 @@ def clean_classdataset(df, model=None, classvalues_dict=None):
                         "Non Predicted",
                         "Not predicted", "NA", "-", np.nan]
     # values_to_drop = []    
-    print(df[model].unique())
+    logger.info(df[model].unique())
     cleaned_df = df[~df[model].isin(values_to_drop)]
-    print("Drop not classifiable", df.shape, cleaned_df.shape)
+    logger.info(f"Drop not classifiable {df.shape} --> {cleaned_df.shape}")
     cleaned_df, label_pred = replace_labels_with_keys(
         cleaned_df, model, classvalues_dict) 
-    print(cleaned_df[label_pred].unique())   
+    logger.info(cleaned_df[label_pred].unique())   
     return cleaned_df, label_pred
 
 
@@ -64,11 +67,23 @@ else:
     # Load calibration data
     df_calibration = pd.read_excel(input_file, sheet_name=data)
     df_calibration, label_pred = clean_classdataset(df_calibration, data, classvalues_dict)
-    print(label_pred)
-    df_calibration.head()
+
+    test_df = pd.read_excel(input_file, sheet_name=data)
+    test_df, label_pred_test = clean_classdataset(test_df, data, classvalues_dict)
+
+    df_train = pd.read_excel(input_file, sheet_name="Training")
+    train_meta = pd.read_excel(input_file, sheet_name="Cover sheet", header=None)
+    experimental_tag = train_meta.loc[train_meta[0] == "Experimental", 1].values[0]
+    predicted_tag = train_meta.loc[train_meta[0] == "Property Name", 1].values[0]         
+    df_train, label_pred_train = clean_classdataset(df_train, predicted_tag, classvalues_dict)    
+
+    logger.info(f"Calibration: {label_pred} Test: {label_pred_test} Train: {label_pred_train}")
 
     train_conformal_classifier(
-        df=df_calibration,
+        df_train=df_train,
+        experimental_tag=experimental_tag,
+        predicted_tag=label_pred_train,
+        df_calibration=df_calibration,
         pred_column=label_pred,
         cache_path=cache_path,
         alpha=0.1,
@@ -77,12 +92,10 @@ else:
     )
 
     test_df = pd.read_excel(input_file, sheet_name=data)
-    test_df, label_pred = clean_classdataset(test_df, data, classvalues_dict)
-    print(label_pred)
-    test_df.head()
+    test_df, label_pred_test = clean_classdataset(test_df, data, classvalues_dict)
 
     result_df, metrics_per_model = predict_conformal_classifier(
-        test_df, pred_column=label_pred,
+        test_df, pred_column=label_pred_test,
         true_column="Exp",
         model_path=product["ncmodel"],
         tag=data
@@ -104,4 +117,4 @@ else:
             result_df.to_excel(writer, sheet_name='Prediction Intervals', index=False)        
         metrics_df.to_excel(writer, sheet_name='Metrics') 
 
-    print(f"Results saved to {product["data"]}")
+    logger.info(f"Results saved to {product["data"]}")
