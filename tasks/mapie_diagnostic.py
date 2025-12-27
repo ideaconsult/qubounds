@@ -276,7 +276,6 @@ def make_sigma_model(ncm):
             weights="distance",     # similarity-based uncertainty
             p=1
         )
-
     else:
         raise ValueError(f"Unsupported NCM {ncm}")
 

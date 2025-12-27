@@ -16,6 +16,7 @@ product = None
 id = "Smiles"
 skip_existing = True
 vega_models = None
+ncm = None
 # -
 
 
@@ -50,7 +51,7 @@ def clean_classdataset(df, model=None, classvalues_dict=None):
     return cleaned_df, label_pred
 
 
-if skip_existing and os.path.exists(product["ncmodel"]) and os.path.exists(product["ncmodel"]):
+if skip_existing and os.path.exists(product["ncmodel"]) and os.path.exists(product["data"]):
     print(f"CP model exists {product['ncmodel']}")
     pass
 else:
@@ -71,7 +72,8 @@ else:
         pred_column=label_pred,
         cache_path=cache_path,
         alpha=0.1,
-        output_model_path=product["ncmodel"]
+        output_model_path=product["ncmodel"],
+        ncm=ncm
     )
 
     test_df = pd.read_excel(input_file, sheet_name=data)

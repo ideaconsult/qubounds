@@ -25,21 +25,21 @@ tasks:
  
 
   - source: tasks/mapiec.py
-    name: "mapiec_[[data]]"
+    name: "mapiec_[[data]]_[[ncm]]"
     product: 
-      nb: "products/mapie/vega/class_ordinal/[[data]]/mapie.ipynb"
-      data: "products/mapie/vega/class_ordinal/[[data]]/mapie.xlsx"
-      ncmodel: "products/mapie/vega/class_ordinal/[[data]]/mapie.pkl"
+      nb: "products/mapie/vega/class_ordinal/[[ncm]]/[[data]]/mapie.ipynb"
+      data: "products/mapie/vega/class_ordinal/[[ncm]]/[[data]]/mapie.xlsx"
+      ncmodel: "products/mapie/vega/class_ordinal/[[ncm]]/[[data]]/mapie.pkl"
     params:
       input_folder: "products/vega/classification"
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: True
+      skip_existing: False
       vega_models: "resources/vega_models_withclasses.xlsx"      
     grid:
-      #data: ["ALGAE_COMBASECLASS"]
+      ncm: ["rfecfp"]
       data: "{{vega_class}}"
 
 
