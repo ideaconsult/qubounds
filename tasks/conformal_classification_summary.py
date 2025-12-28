@@ -18,10 +18,9 @@ for key_star in upstream:
         print(df.head(1))
         df["Split"] = "Test"
         df["source"] = "VEGA" if "vega" in key_star else "EPA"   
-        _key = key.replace("conformal_external_classification_", "").replace("conformal_vega_classification_", "")
+        _key = key.replace("conformal_external_classification_", "").replace("conformal_vega_classification_", "").replace("mapiec_*","")
         df["Endpoint"] = _key
         meta = pd.read_excel(file_path, sheet_name="Summary sheet")
-        print(meta)
         df = pd.merge(meta, df, on=['Method Name', 'Split'], how='outer')        
         meta = pd.read_excel(file_path, sheet_name="Cover sheet", header=None, index_col=0).transpose()
         for t in ["Property Name", "Property Description", "Dataset Name", "Dataset Description", "Property Units", "nTraining", "nTEST","Min","Max"]:
@@ -36,4 +35,4 @@ for key_star in upstream:
 combined_df.to_excel(product["data"], index=False)        
 
 
-combined_df.sort_values(by=['average_set_size'], ascending=True).head(25)
+#combined_df.sort_values(by=['average_set_size'], ascending=True).head(25)

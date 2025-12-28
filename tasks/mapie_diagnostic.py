@@ -2,9 +2,16 @@ from scipy.stats import ks_2samp
 import numpy as np
 import logging
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.neighbors import KNeighborsRegressor, RadiusNeighborsRegressor
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.neighbors import KNeighborsRegressor, RadiusNeighborsRegressor, KNeighborsClassifier
+from sklearn.ensemble import (
+    RandomForestRegressor, GradientBoostingRegressor, GradientBoostingClassifier,
+    HistGradientBoostingClassifier)
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
+from mord import LogisticAT, LAD  # or LogisticIT, LogisticSE
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
+from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+
 import matplotlib.pyplot as plt
 
 
@@ -282,8 +289,101 @@ def make_sigma_model(ncm):
             weights="distance",     # similarity-based uncertainty
             p=2
         )    
+    elif ncm == "knnjecfp":
+        return KNeighborsRegressor(
+            n_neighbors=5,          # intentional AD behavior
+            weights="distance",     # similarity-based uncertainty
+            metric="jaccard"
+        )    
+    elif ncm == "cgbecfp":
+        return GradientBoostingClassifier(
+            n_estimators=100,
+            random_state=42
+        )
+    elif ncm == "ogbecfp":
+        return GradientBoostingClassifier(
+            n_estimators=100,
+            random_state=42
+        )        
+    elif ncm == "chgbecfp":
+        return HistGradientBoostingClassifier(
+            random_state=42
+        )    
+    elif ncm == "cknnecfp":
+        return KNeighborsClassifier(
+            n_neighbors=5,          # intentional AD behavior
+            weights="distance",     # similarity-based uncertainty
+            metric="jaccard"
+        )     
+    elif ncm == "crfecfp":
+        return RandomForestClassifier(
+            n_estimators=100, class_weight='balanced'
+        )
+    elif ncm == "cmlpecfp":
+        return MLPClassifier(
+            hidden_layer_sizes=(100, 50),
+            activation='relu',
+            alpha=0.01,  # L2 regularization
+            max_iter=500,
+            random_state=42
+        )
+    elif ncm == "omlpecfp":
+        return MLPClassifier(
+            hidden_layer_sizes=(100, 50),
+            activation='relu',
+            alpha=0.01,  # L2 regularization
+            max_iter=500,
+            random_state=42
+        )    
+    elif ncm == "cmordecfp":
+        return LogisticAT(alpha=1.0)
+    elif ncm == "omordecfp":
+        return LogisticAT(alpha=1.0)        
+    elif ncm == "ladecfp":
+        return LAD()
     else:
         raise ValueError(f"Unsupported NCM {ncm}")
+
+
+def compute_ordinal_sigma(probs, classes, method='expected'):
+    """
+    Compute NCM sigma from probability distribution over ordinal distances.
+    
+    Parameters
+    ----------
+    probs : array, shape (n_samples, n_classes)
+        Probability distribution over distance classes
+    classes : array, shape (n_classes,)
+        Ordinal distance values (e.g., [0, 1, 2, 3])
+    method : str
+        'expected' - E[distance]
+        'expected_variance' - E[distance] + 0.5*sqrt(Var[distance])
+        'quantile90' - 90th percentile of distance distribution
+    
+    Returns
+    -------
+    sigma : array, shape (n_samples,)
+        Predicted uncertainty (expected ordinal distance)
+    """
+    expected = (probs * classes).sum(axis=1)
+    
+    if method == 'expected':
+        return expected
+    
+    elif method == 'expected_variance':
+        variance = (probs * (classes - expected[:, None])**2).sum(axis=1)
+        return expected + 0.5 * np.sqrt(variance)
+    
+    elif method == 'quantile90':
+        cumprobs = np.cumsum(probs, axis=1)
+        quantiles = np.array([
+            classes[min(np.searchsorted(cumprobs[i], 0.9), len(classes)-1)]
+            for i in range(len(probs))
+        ])
+        return quantiles
+    
+    else:
+        raise ValueError(f"Unknown method: {method}")
 
 
 def sigma_diagnostics(y_true, y_pred):
@@ -427,3 +527,423 @@ class PositiveSigmaWrapper(BaseEstimator, RegressorMixin):
 
     def predict(self, X):
         return np.exp(self.model.predict(X))
+
+
+def plot_normalized_ordinal_distances(
+    distances_cal,
+    sigma_cal,
+    distances_train=None,
+    sigma_train=None,
+    distances_test=None,
+    sigma_test=None,
+    bins="auto",
+    log_scale=False,
+    title="Normalized ordinal distance distributions",
+    confidence_score=0.9
+):
+    """
+    Plot distributions of normalized ordinal distances: |y_true - y_pred| / σ(x)
+    
+    This shows how well the NCM model predicts ordinal distances.
+    Ideally, these should be similar across train/cal/test sets.
+    
+    Parameters
+    ----------
+    distances_cal : array-like
+        Actual ordinal distances |y_true - y_pred| on calibration set
+    sigma_cal : array-like
+        NCM predicted distances σ(x) on calibration set
+    distances_train : array-like, optional
+        Actual ordinal distances on training set
+    sigma_train : array-like, optional
+        NCM predicted distances on training set
+    distances_test : array-like, optional
+        Actual ordinal distances on test set (if true labels available)
+    sigma_test : array-like, optional
+        NCM predicted distances on test set
+    bins : int or str, default='auto'
+        Histogram bins
+    log_scale : bool, default=False
+        Use log scale for y-axis
+    title : str
+        Plot title
+    confidence_score : float, default=0.9
+        Quantile to mark on plot (corresponds to 1-alpha)
+    """
+    import matplotlib.pyplot as plt
+    
+    # Compute normalized scores
+    scores_cal = distances_cal / sigma_cal
+    
+    plt.figure(figsize=(9, 4))
+    
+    # Calibration
+    plt.hist(
+        scores_cal,
+        bins=bins,
+        density=True,
+        histtype="step",
+        linewidth=2,
+        label="Calibration"
+    )
+    
+    # Train
+    if distances_train is not None and sigma_train is not None:
+        scores_train = distances_train / sigma_train
+        plt.hist(
+            scores_train,
+            bins=bins,
+            density=True,
+            histtype="step",
+            linewidth=2,
+            label="Train"
+        )
+    
+    # Test
+    if distances_test is not None and sigma_test is not None:
+        scores_test = distances_test / sigma_test
+        plt.hist(
+            scores_test,
+            bins=bins,
+            density=True,
+            histtype="step",
+            linewidth=2,
+            label="Test"
+        )
+    
+    q = np.quantile(scores_cal, confidence_score)
+    plt.axvline(q, linestyle="--", color='red', 
+                label=f"Cal. {100*confidence_score:.0f}th percentile = {q:.2f}")
+    
+    if log_scale:
+        plt.yscale("log")
+    
+    plt.xlabel(r"$|y_{true} - y_{pred}| / \hat{\sigma}(x)$")
+    plt.ylabel("Density")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    return plt.gcf()
+
+
+def plot_prediction_set_sizes(
+    set_sizes,
+    bins=None,
+    title="Prediction Set Size Distribution",
+    alpha=None,
+    show_stats=True
+):
+    """
+    Plot distribution of prediction set sizes.
+    
+    Parameters
+    ----------
+    set_sizes : array-like
+        Prediction set sizes for each sample
+    bins : int or array-like, optional
+        Histogram bins. If None, uses integer bins for discrete sizes.
+    title : str
+        Plot title
+    alpha : float, optional
+        Significance level (for display in title)
+    show_stats : bool, default=True
+        Show mean/median set size on plot
+    """
+    import matplotlib.pyplot as plt
+    
+    plt.figure(figsize=(7, 4))
+    
+    # Use integer bins for discrete set sizes
+    if bins is None:
+        max_size = int(np.max(set_sizes))
+        bins = np.arange(-0.5, max_size + 1.5, 1)
+    
+    plt.hist(
+        set_sizes,
+        bins=bins,
+        density=True,
+        alpha=0.7,
+        edgecolor='black',
+        linewidth=1.2
+    )
+    
+    # Add statistics
+    mean_size = np.mean(set_sizes)
+    median_size = np.median(set_sizes)
+    
+    plt.axvline(mean_size, color='red', linestyle='--', 
+                linewidth=2, label=f'Mean = {mean_size:.2f}')
+    plt.axvline(median_size, color='blue', linestyle='--', 
+                linewidth=2, label=f'Median = {median_size:.0f}')
+    
+    plt.xlabel("Prediction Set Size")
+    plt.ylabel("Density")
+    
+    if alpha is not None:
+        title = f"{title} (α={alpha:.3f}, coverage≥{1-alpha:.1%})"
+    
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    
+    if show_stats:
+        # Add text box with stats
+        stats_text = (
+            f"Empty sets: {np.sum(set_sizes == 0)} ({100*np.mean(set_sizes == 0):.1f}%)\n"
+            f"Singletons: {np.sum(set_sizes == 1)} ({100*np.mean(set_sizes == 1):.1f}%)\n"
+            f"Mean: {mean_size:.2f}\n"
+            f"Median: {median_size:.0f}"
+        )
+        plt.text(0.98, 0.97, stats_text,
+                transform=plt.gca().transAxes,
+                verticalalignment='top',
+                horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
+                fontsize=9)
+    
+    return plt.gcf()
+
+
+def plot_ncm_diagnostics(
+    distances_actual,
+    distances_predicted,
+    title="NCM Model: Predicted vs Actual Distances"
+):
+    """
+    Scatter plot of NCM predictions vs actual ordinal distances.
+    
+    Parameters
+    ----------
+    distances_actual : array-like
+        True ordinal distances |y_true - y_pred|
+    distances_predicted : array-like
+        NCM model predictions σ(x)
+    title : str
+        Plot title
+    """
+    import matplotlib.pyplot as plt
+    
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    
+    # Scatter plot
+    axes[0].scatter(distances_predicted, distances_actual, alpha=0.3, s=10)
+    
+    # Add diagonal line (perfect prediction)
+    max_val = max(np.max(distances_actual), np.max(distances_predicted))
+    axes[0].plot([0, max_val], [0, max_val], 'r--', linewidth=2, label='Perfect prediction')
+    
+    axes[0].set_xlabel(r"Predicted distance $\hat{\sigma}(x)$")
+    axes[0].set_ylabel(r"Actual distance $|y_{true} - y_{pred}|$")
+    axes[0].set_title("NCM Predictions vs Actual")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    
+    # Residual plot (actual - predicted)
+    residuals = distances_actual - distances_predicted
+    axes[1].scatter(distances_predicted, residuals, alpha=0.3, s=10)
+    axes[1].axhline(0, color='r', linestyle='--', linewidth=2)
+    axes[1].set_xlabel(r"Predicted distance $\hat{\sigma}(x)$")
+    axes[1].set_ylabel(r"Residual (actual - predicted)")
+    axes[1].set_title("NCM Residuals")
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    return fig
+
+
+def plot_coverage_by_class(
+    y_true,
+    prediction_sets,
+    class_names=None,
+    title="Coverage by Class"
+):
+    """
+    Plot empirical coverage for each class.
+    
+    Parameters
+    ----------
+    y_true : array-like
+        True class labels
+    prediction_sets : list of lists or array
+        Prediction sets for each sample
+    class_names : list, optional
+        Names for each class
+    title : str
+        Plot title
+    """
+    import matplotlib.pyplot as plt
+    
+    # Convert prediction_sets to list of sets if needed
+    if isinstance(prediction_sets, np.ndarray):
+        if len(prediction_sets.shape) == 2:  # Binary matrix
+            classes = np.arange(prediction_sets.shape[1])
+            pred_sets_list = [classes[prediction_sets[i].astype(bool)].tolist() 
+                             for i in range(len(prediction_sets))]
+        else:
+            pred_sets_list = prediction_sets.tolist()
+    else:
+        pred_sets_list = prediction_sets
+    
+    # Compute coverage per class
+    unique_classes = np.unique(y_true)
+    coverages = []
+    counts = []
+    
+    for cls in unique_classes:
+        mask = (y_true == cls)
+        covered = np.array([cls in pred_sets_list[i] for i in range(len(y_true))])
+        coverage = np.mean(covered[mask])
+        coverages.append(coverage)
+        counts.append(np.sum(mask))
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    x = np.arange(len(unique_classes))
+    bars = ax.bar(x, coverages, alpha=0.7, edgecolor='black')
+    
+    # Color bars by coverage (red if below target)
+    for i, (bar, cov) in enumerate(zip(bars, coverages)):
+        if cov < 0.9:  # Assuming 90% target
+            bar.set_color('salmon')
+        else:
+            bar.set_color('lightgreen')
+    
+    # Add count labels on bars
+    for i, (bar, count) in enumerate(zip(bars, counts)):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'n={count}',
+                ha='center', va='bottom', fontsize=8)
+    
+    # Add horizontal line at target coverage
+    ax.axhline(0.9, color='blue', linestyle='--', linewidth=2, 
+               label='Target (90%)', alpha=0.7)
+    
+    ax.set_xlabel('Class')
+    ax.set_ylabel('Empirical Coverage')
+    ax.set_title(title)
+    ax.set_xticks(x)
+    
+    if class_names is not None:
+        ax.set_xticklabels(class_names)
+    else:
+        ax.set_xticklabels(unique_classes)
+    
+    ax.set_ylim(0, 1.05)
+    ax.legend()
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    return fig
+
+
+def plot_conformal_diagnostics(
+    model_path,
+    df_train=None,
+    df_cal=None,
+    df_test=None,
+    experimental_tag="Exp",
+    predicted_tag="Pred",
+    output_dir=None
+):
+    """
+    Generate all diagnostic plots for a trained conformal classifier.
+    
+    Parameters
+    ----------
+    model_path : str
+        Path to saved conformal model
+    df_train : DataFrame, optional
+        Training data with Smiles, experimental_tag, predicted_tag
+    df_cal : DataFrame, optional
+        Calibration data
+    df_test : DataFrame, optional
+        Test data
+    experimental_tag : str
+        Column name for true labels
+    predicted_tag : str
+        Column name for predictions
+    output_dir : str, optional
+        Directory to save plots. If None, uses model_path directory.
+    """
+    import os
+    
+    # Load model
+    with open(model_path, "rb") as f:
+        saved = pickle.load(f)
+    
+    sigma_model = saved["sigma_model"]
+    classes_original = saved["classes_original"]
+    class_to_mapped = saved["class_to_mapped"]
+    alpha = saved["alpha"]
+    
+    if output_dir is None:
+        output_dir = os.path.dirname(model_path)
+        base_name = os.path.splitext(os.path.basename(model_path))[0]
+    else:
+        base_name = "conformal"
+    
+    figures = {}
+    
+    # Process each dataset
+    datasets = {}
+    if df_train is not None:
+        datasets['train'] = df_train
+    if df_cal is not None:
+        datasets['cal'] = df_cal
+    if df_test is not None:
+        datasets['test'] = df_test
+    
+    # Compute normalized distances for all datasets
+    all_distances = {}
+    all_sigmas = {}
+    
+    for name, df in datasets.items():
+        smiles = df["Smiles"].values
+        y_true_orig = df[experimental_tag].values
+        y_pred_orig = df[predicted_tag].values
+        
+        # Remap
+        y_true = np.array([class_to_mapped[c] for c in y_true_orig])
+        y_pred = np.array([class_to_mapped[c] for c in y_pred_orig])
+        
+        # Compute distances
+        distances = np.abs(y_true - y_pred).astype(float)
+        
+        # Get NCM predictions
+        X_ecfp = np.array([smiles_to_ecfp_cached(sm) for sm in smiles])
+        sigmas = sigma_model.predict(X_ecfp)
+        
+        all_distances[name] = distances
+        all_sigmas[name] = sigmas
+    
+    # Plot 1: Normalized distances
+    fig = plot_normalized_ordinal_distances(
+        distances_cal=all_distances.get('cal'),
+        sigma_cal=all_sigmas.get('cal'),
+        distances_train=all_distances.get('train'),
+        sigma_train=all_sigmas.get('train'),
+        distances_test=all_distances.get('test'),
+        sigma_test=all_sigmas.get('test'),
+        title=f"Normalized Ordinal Distances (α={alpha})",
+        confidence_score=1-alpha
+    )
+    fig.savefig(os.path.join(output_dir, f"{base_name}_normalized_distances.png"), dpi=150)
+    figures['normalized_distances'] = fig
+    plt.close()
+    
+    # Plot 2: NCM diagnostics for each dataset
+    for name in datasets.keys():
+        fig = plot_ncm_diagnostics(
+            distances_actual=all_distances[name],
+            distances_predicted=all_sigmas[name],
+            title=f"NCM Model {name.capitalize()} Set Performance"
+        )
+        fig.savefig(os.path.join(output_dir, f"{base_name}_ncm_{name}.png"), dpi=150)
+        figures[f'ncm_{name}'] = fig
+        plt.close()
+    
+    logger.info(f"Diagnostic plots saved to {output_dir}/{base_name}_*.png")
+    
+    return figures

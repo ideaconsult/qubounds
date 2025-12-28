@@ -7,7 +7,7 @@ from tasks.vega.utils_vega import (
     replace_labels_with_keys, parse_classvalues)
 from tasks.assessment.utils import init_logging
 from pathlib import Path
-
+from tasks.mapie_diagnostic import plot_conformal_diagnostics
 
 # + tags=["parameters"]
 input_folder = None
@@ -112,6 +112,15 @@ else:
         _metrics_df["Split"] = split
         metrics_df = _metrics_df if metrics_df is None else pd.concat([metrics_df, _metrics_df])
 
+    #plot_conformal_diagnostics(
+    #    model_path=product["ncmodel"],
+    #    df_train=df_train,
+    #    df_cal=df_calibration,
+    #    df_test=test_df,  # Add test data
+    #    experimental_tag=experimental_tag,
+    #    predicted_tag=label_pred_test,
+    #    output_dir="analysis/plots"
+    #)
     output_data_path = product["data"]
     with pd.ExcelWriter(output_data_path, engine='xlsxwriter') as writer:
         for sheet in ['Cover sheet', 'Summary sheet']:
