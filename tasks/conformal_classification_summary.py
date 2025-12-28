@@ -1,7 +1,5 @@
 import pandas as pd
-import ast
-import math
-from collections import Counter
+import pickle
 
 
 # + tags=["parameters"]
@@ -12,12 +10,14 @@ upstream = None
 combined_df = pd.DataFrame()
 for key_star in upstream:
     for key in upstream[key_star]:
+        model_path = upstream[key_star][key]["ncmodel"] 
+        sigma_model = {}
+        with open(model_path, "rb") as f:
+            sigma_model = pickle.load(f)
         file_path = upstream[key_star][key]["data"]
         df = pd.read_excel(file_path, sheet_name="Metrics")
-        print(df.columns)
-        print(df.head(1))
-        df["Split"] = "Test"
-        df["source"] = "VEGA" if "vega" in key_star else "EPA"   
+        if "Split" not in df.columns:
+            df["Split"] = "Test"
         _key = key.replace("conformal_external_classification_", "").replace("conformal_vega_classification_", "").replace("mapiec_*","")
         df["Endpoint"] = _key
         meta = pd.read_excel(file_path, sheet_name="Summary sheet")
@@ -28,10 +28,11 @@ for key_star in upstream:
                 df[t] = meta[t].iloc[0]
             except Exception:
                 df[t] = None
-
+        for t in ['sigma_r2', 'sigma_rmse', 'sigma_mae']:
+            df[t] = sigma_model.get(t, None)
         combined_df = pd.concat([combined_df, df], ignore_index=True)
 
-# combined_df['Relative Interval Width'] = combined_df['Average Interval Width'] / (combined_df['Max'] - combined_df['Min'])
+#combined_df['Relative Interval Width'] = combined_df['average_set_size'] / (combined_df['Max'] - combined_df['Min'])
 combined_df.to_excel(product["data"], index=False)        
 
 
