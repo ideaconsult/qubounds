@@ -31,6 +31,7 @@ for key_star in upstream:
                     df[t] = None
             for t in ['sigma_r2', 'sigma_rmse', 'sigma_mae']:
                 df[t] = sigma_model.get(t, None)
+                df[f"{t}_cal"] = sigma_model.get("diag_sigma_cal", {}).get(t, None)
             combined_df = pd.concat([combined_df, df], ignore_index=True)
         except Exception:
             pass
