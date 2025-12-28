@@ -276,6 +276,12 @@ def make_sigma_model(ncm):
             weights="distance",     # similarity-based uncertainty
             p=1
         )
+    elif ncm == "knnecfp2":
+        return KNeighborsRegressor(
+            n_neighbors=5,          # intentional AD behavior
+            weights="distance",     # similarity-based uncertainty
+            p=2
+        )    
     else:
         raise ValueError(f"Unsupported NCM {ncm}")
 
