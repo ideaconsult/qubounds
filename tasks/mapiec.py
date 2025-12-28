@@ -64,17 +64,18 @@ else:
     conn = init_cache(cache_path)
     np.random.seed(42)
     input_file = os.path.join(input_folder, f"{data}.xlsx")
-    # Load calibration data
-    df_calibration = pd.read_excel(input_file, sheet_name=data)
-    df_calibration, label_pred = clean_classdataset(df_calibration, data, classvalues_dict)
+    meta = pd.read_excel(input_file, sheet_name="Cover sheet", header=None)
+    experimental_tag = meta.loc[meta[0] == "Experimental", 1].values[0]
+    predicted_tag = meta.loc[meta[0] == "Property Name", 1].values[0]         
 
-    test_df = pd.read_excel(input_file, sheet_name=data)
-    test_df, label_pred_test = clean_classdataset(test_df, data, classvalues_dict)
+    # Load calibration data
+    df_calibration = pd.read_excel(input_file, sheet_name="Test")
+    df_calibration, label_pred = clean_classdataset(df_calibration, predicted_tag, classvalues_dict)
+
+    test_df = pd.read_excel(input_file, sheet_name="Test")
+    test_df, label_pred_test = clean_classdataset(test_df, predicted_tag, classvalues_dict)    
 
     df_train = pd.read_excel(input_file, sheet_name="Training")
-    train_meta = pd.read_excel(input_file, sheet_name="Cover sheet", header=None)
-    experimental_tag = train_meta.loc[train_meta[0] == "Experimental", 1].values[0]
-    predicted_tag = train_meta.loc[train_meta[0] == "Property Name", 1].values[0]         
     df_train, label_pred_train = clean_classdataset(df_train, predicted_tag, classvalues_dict)    
 
     logger.info(f"Calibration: {label_pred} Test: {label_pred_test} Train: {label_pred_train}")
@@ -84,37 +85,40 @@ else:
         experimental_tag=experimental_tag,
         predicted_tag=label_pred_train,
         df_calibration=df_calibration,
-        pred_column=label_pred,
         cache_path=cache_path,
         alpha=0.1,
         output_model_path=product["ncmodel"],
         ncm=ncm
     )
 
-    test_df = pd.read_excel(input_file, sheet_name=data)
-    test_df, label_pred_test = clean_classdataset(test_df, data, classvalues_dict)
-
-    result_df, metrics_per_model = predict_conformal_classifier(
-        test_df, pred_column=label_pred_test,
-        true_column="Exp",
-        model_path=product["ncmodel"],
-        tag=data
-    )
-
-    model_metrics = {}
-    model_metrics[data] = metrics_per_model
-    metrics_df = pd.DataFrame.from_dict(model_metrics, orient='index')
-    metrics_df.index.name = 'Method Name'
-    metrics_df["alpha"] = alpha
-    metrics_df
+    results = {}
+    metrics_df = None
+    _all = list(zip(["Test", "Training", "Calibration"],
+                    [test_df, df_train, df_calibration], 
+                    ["Prediction Intervals", "Training PI", "Calibration PI"]))
+    for (split, df, sheet_name) in _all:
+        result_df, metrics_per_model = predict_conformal_classifier(
+            df, pred_column=label_pred_test,
+            true_column=experimental_tag,
+            model_path=product["ncmodel"],
+            tag=data
+        )
+        results[sheet_name] = result_df
+        model_metrics = {}
+        model_metrics[data] = metrics_per_model
+        _metrics_df = pd.DataFrame.from_dict(model_metrics, orient='index')
+        _metrics_df.index.name = 'Method Name'
+        _metrics_df["alpha"] = alpha
+        _metrics_df["Split"] = split
+        metrics_df = _metrics_df if metrics_df is None else pd.concat([metrics_df, _metrics_df])
 
     output_data_path = product["data"]
     with pd.ExcelWriter(output_data_path, engine='xlsxwriter') as writer:
         for sheet in ['Cover sheet', 'Summary sheet']:
             _df = pd.read_excel(input_file, sheet_name=sheet)
-            _df.to_excel(writer, sheet_name=sheet, index=False)        
-        if result_df is not None:
-            result_df.to_excel(writer, sheet_name='Prediction Intervals', index=False)        
+            _df.to_excel(writer, sheet_name=sheet, index=False)       
+        for sheet_name in results:
+            results[sheet_name].to_excel(writer, sheet_name=sheet_name, index=False)        
         metrics_df.to_excel(writer, sheet_name='Metrics') 
 
     logger.info(f"Results saved to {product["data"]}")

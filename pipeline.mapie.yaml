@@ -17,7 +17,7 @@ tasks:
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: False
+      skip_existing: True
     grid:
       ncm: ["rfecfp", "gbecfp", "knnecfp"]    
       data: "{{vega_regr}}"
@@ -39,7 +39,7 @@ tasks:
       skip_existing: False
       vega_models: "resources/vega_models_withclasses.xlsx"      
     grid:
-      ncm: ["rfecfp"]
+      ncm: ["rfecfp", "gbecfp", "knnecfp"]  
       data: "{{vega_class}}"
 
 
