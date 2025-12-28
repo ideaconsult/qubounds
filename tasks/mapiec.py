@@ -103,6 +103,8 @@ else:
             model_path=product["ncmodel"],
             tag=data
         )
+        if result_df is None:
+            continue
         results[sheet_name] = result_df
         model_metrics = {}
         model_metrics[data] = metrics_per_model
@@ -127,7 +129,10 @@ else:
             _df = pd.read_excel(input_file, sheet_name=sheet)
             _df.to_excel(writer, sheet_name=sheet, index=False)       
         for sheet_name in results:
-            results[sheet_name].to_excel(writer, sheet_name=sheet_name, index=False)        
-        metrics_df.to_excel(writer, sheet_name='Metrics') 
+            results_df = results[sheet_name]
+            if results_df is not None:
+                results_df.to_excel(writer, sheet_name=sheet_name, index=False)        
+        if metrics_df is not None:
+            metrics_df.to_excel(writer, sheet_name='Metrics') 
 
     logger.info(f"Results saved to {product["data"]}")
