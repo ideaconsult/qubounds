@@ -27,19 +27,20 @@ tasks:
   - source: tasks/mapiec.py
     name: "mapiec_[[data]]_[[ncm]]"
     product: 
-      nb: "products/mapie/vega/class_ordinal/[[ncm]]/[[data]]/mapie.ipynb"
-      data: "products/mapie/vega/class_ordinal/[[ncm]]/[[data]]/mapie.xlsx"
-      ncmodel: "products/mapie/vega/class_ordinal/[[ncm]]/[[data]]/mapie.pkl"
+      nb: "products/mapie/vega/{{class_folder}}/[[ncm]]/[[data]]/mapie.ipynb"
+      data: "products/mapie/vega/{{class_folder}}/[[ncm]]/[[data]]/mapie.xlsx"
+      ncmodel: "products/mapie/vega/{{class_folder}}/[[ncm]]/[[data]]/mapie.pkl"
     params:
       input_folder: "products/vega/classification"
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: False
+      skip_existing: True
       vega_models: "resources/vega_models_withclasses.xlsx"      
     grid:
-      ncm: ["rfecfp", "gbecfp", "knnecfp"]  
+      ncm: ["crfecfp", "cmlpecfp", "cgbecfp", "chgbecfp", "cmordecfp", "ladecfp", "ogbecfp", "omlpecfp", "knnjecfp","cknnecfp","rfecfp","gbecfp"]  
+      #data: ["ALGAE_COMBASECLASS"]
       data: "{{vega_class}}"
 
 
@@ -55,9 +56,17 @@ tasks:
     name: "classification_summary_mapie"
     upstream: ["mapiec_*"]
     product: 
-      nb: "products/mapie/vega/class_ordinal/summary.ipynb"
-      data: "products/mapie/vega/class_ordinal/summary.xlsx"              
+      nb: "products/mapie/vega/{{class_folder}}/summary.ipynb"
+      data: "products/mapie/vega/{{class_folder}}/summary.xlsx"              
 
+  - source: tasks/mapie_class_analysis.py
+    name: "mapie_class_analysis"
+    upstream: ["classification_summary_mapie"]
+    product: 
+      nb: "products/mapie/vega/{{class_folder}}/mapie_class_analysis.ipynb"
+      data: "products/mapie/vega/{{class_folder}}"
+    params:
+      alpha: 0.1    
 
   - source: tasks/mapie_apply.py
     name: "mapier_apply_[[input_key]]_[[data]]_[[ncm_code]]"

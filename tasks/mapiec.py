@@ -2,7 +2,7 @@ import os.path
 import numpy as np
 import pandas as pd
 from tasks.descriptors.ecfp import init_cache
-from tasks.mapie_class_ordinal import train_conformal_classifier, predict_conformal_classifier
+from tasks.mapie_class_lac import train_conformal_classifier, predict_conformal_classifier
 from tasks.vega.utils_vega import (
     replace_labels_with_keys, parse_classvalues)
 from tasks.assessment.utils import init_logging
