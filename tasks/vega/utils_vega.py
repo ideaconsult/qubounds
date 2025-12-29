@@ -11,8 +11,11 @@ import ast
 from tasks.assessment.thresholds import Thresholds
 import re
 import logging
+import numpy as np
+
 
 logger = logging.getLogger(__name__)
+
 
 def load_vega_models(file_vega_models, model):
     df_models = pd.read_excel(file_vega_models, engine="openpyxl")
@@ -524,3 +527,34 @@ def get_main_prediction(model, predicted_columns):
     match = re.search(r"\[(.*?)\]", main_predicted_column)
     main_unit = match.group(1) if match else None
     return main_predicted_column, main_unit, 0
+
+
+def clean_classdataset(df, model=None, classvalues_dict=None):
+    values_to_drop = ["Not Classifiable", 
+                        "Not classifiable",
+                        "Not classifiable", "Unknown", "", 
+                        "N.A.", "No class found",
+                        "Non Predicted",
+                        "Not predicted", "NA", "-", np.nan]
+    # values_to_drop = []    
+    logger.info(df[model].unique())
+    cleaned_df = df[~df[model].isin(values_to_drop)]
+    logger.info(f"Drop not classifiable {df.shape} --> {cleaned_df.shape}")
+    cleaned_df, label_pred = replace_labels_with_keys(
+        cleaned_df, model, classvalues_dict) 
+    logger.info(cleaned_df[label_pred].unique())   
+    return cleaned_df, label_pred
+
+
+def get_class_values(vega_models, data):
+    df_models = pd.read_excel(vega_models, engine="openpyxl")
+    df_models = df_models.loc[df_models["Key"] == data]
+    df_models.head(2)
+    needs_fix = df_models['ClassValues'].astype(str).str.contains('Âµ').any()
+    if needs_fix:
+        logger.info("Column ClassValues contains garbled encoding — fixing...")
+        df_models['ClassValues'] = df_models['ClassValues'].str.replace('Âµ', 'µ', regex=False)
+    classvalues_str = df_models.loc[df_models["Key"] == data, "ClassValues"].values[0]
+    logger.info(classvalues_str)
+    classvalues_dict = parse_classvalues(classvalues_str)
+    return classvalues_dict

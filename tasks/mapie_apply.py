@@ -3,9 +3,10 @@ import numpy as np
 import pandas as pd
 from tasks.descriptors.ecfp import init_cache
 from tasks.mapie_regression import predict_conformal, clean_regrdataset
+from tasks.mapie_class_lac import predict_conformal_classifier_chunked
 from tasks.vega.utils_vega import (
     load_vega_report, writeExcel_epa, get_adi_cols, clean_vega_report_df, 
-    get_main_prediction)
+    get_main_prediction, clean_classdataset, get_class_values)
 from tasks.assessment.utils import init_logging
 import traceback
 import time
@@ -22,6 +23,8 @@ data = None
 input_key = None
 ncm_code = None
 skip_existing = None
+classification = False
+vega_models = None
 # -
 
 
@@ -70,14 +73,26 @@ else:
         df = df[~df[main_column].isin(values_to_drop)]    
         logger.debug("{data}\tpredict_conformal start")
         start_time = time.time()
-        result_df, metrics_per_model = predict_conformal(
-            df, pred_column=main_column,
-            true_column="Experimental",
-            model_path=_ncmodel_path,
-            tag=data,
-            smiles_column="Smiles",
-            chunk_size=50000
-        )
+        if classification:
+            classvalues_dict = get_class_values(vega_models, data)
+            df, label_pred = clean_classdataset(df, main_column, classvalues_dict)               
+            result_df, metrics_per_model = predict_conformal_classifier_chunked(
+                df, pred_column=label_pred,
+                true_column="Experimental",
+                model_path=_ncmodel_path,
+                tag=data,
+                smiles_column="Smiles",
+                chunk_size=50000
+            )
+        else:
+            result_df, metrics_per_model = predict_conformal(
+                df, pred_column=main_column,
+                true_column="Experimental",
+                model_path=_ncmodel_path,
+                tag=data,
+                smiles_column="Smiles",
+                chunk_size=50000
+            )
         elapsed_time = time.time() - start_time
         logger.debug(f"{data}\tpredict_conformal end (elapsed: {elapsed_time:.2f}s)")
         model_metrics = {}

@@ -2,9 +2,10 @@ import os.path
 import numpy as np
 import pandas as pd
 from tasks.descriptors.ecfp import init_cache
-from tasks.mapie_class_lac import train_conformal_classifier, predict_conformal_classifier
+from tasks.mapie_class_lac import (
+    train_conformal_classifier, predict_conformal_classifier)
 from tasks.vega.utils_vega import (
-    replace_labels_with_keys, parse_classvalues)
+    get_class_values, clean_classdataset)
 from tasks.assessment.utils import init_logging
 from pathlib import Path
 from tasks.mapie_diagnostic import plot_conformal_diagnostics
@@ -25,36 +26,6 @@ method_score="LAC"
 
 logger = init_logging(Path(product["nb"]).parent / "logs", "report.log")
 
-def get_clas_values(vega_models):
-    df_models = pd.read_excel(vega_models, engine="openpyxl")
-    df_models = df_models.loc[df_models["Key"] == data]
-    df_models.head(2)
-    needs_fix = df_models['ClassValues'].astype(str).str.contains('Âµ').any()
-    if needs_fix:
-        logger.info("Column ClassValues contains garbled encoding — fixing...")
-        df_models['ClassValues'] = df_models['ClassValues'].str.replace('Âµ', 'µ', regex=False)
-    classvalues_str = df_models.loc[df_models["Key"] == data, "ClassValues"].values[0]
-    logger.info(classvalues_str)
-    classvalues_dict = parse_classvalues(classvalues_str)
-    return classvalues_dict
-
-
-def clean_classdataset(df, model=None, classvalues_dict=None):
-    values_to_drop = ["Not Classifiable", 
-                        "Not classifiable",
-                        "Not classifiable", "Unknown", "", 
-                        "N.A.", "No class found",
-                        "Non Predicted",
-                        "Not predicted", "NA", "-", np.nan]
-    # values_to_drop = []    
-    logger.info(df[model].unique())
-    cleaned_df = df[~df[model].isin(values_to_drop)]
-    logger.info(f"Drop not classifiable {df.shape} --> {cleaned_df.shape}")
-    cleaned_df, label_pred = replace_labels_with_keys(
-        cleaned_df, model, classvalues_dict) 
-    logger.info(cleaned_df[label_pred].unique())   
-    return cleaned_df, label_pred
-
 
 if skip_existing and os.path.exists(product["ncmodel"]) and os.path.exists(product["data"]):
     print(f"CP model exists {product['ncmodel']}")
@@ -62,7 +33,7 @@ if skip_existing and os.path.exists(product["ncmodel"]) and os.path.exists(produ
 else:
     conn = init_cache(cache_path)
     # --- Load Data ---
-    classvalues_dict = get_clas_values(vega_models)
+    classvalues_dict = get_class_values(vega_models, data)
     conn = init_cache(cache_path)
     np.random.seed(42)
     input_file = os.path.join(input_folder, f"{data}.xlsx")

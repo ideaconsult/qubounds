@@ -1,4 +1,4 @@
-executor: parallel
+executor: serial
 
 meta:
     extract_upstream: False
@@ -19,6 +19,7 @@ tasks:
       cache_path: "products/mapie/ecfp4_cache.db"
       skip_existing: True
     grid:
+      #ncm: ["rfecfp", "gbecfp", "knnecfp", "knnjecfp", "knnecfp2"]    
       ncm: ["rfecfp", "gbecfp", "knnecfp"]    
       data: "{{vega_regr}}"
       #ncm: ["knnecfp", "rfecfp", "gbecfp"]
@@ -81,7 +82,7 @@ tasks:
 
 
   - source: tasks/mapie_apply.py
-    name: "mapier_apply_[[input_key]]_[[data]]_[[ncm_code]]"
+    name: "regr_apply_[[input_key]]_[[data]]_[[ncm_code]]"
     upstream: ["regression_summary_mapie"]
     #upstream: []
     product: 
@@ -92,11 +93,34 @@ tasks:
       cache_path: "products/ecfp4_cache.db"
       ncmodel: "products/mapie/vega/regression/{ncm_code}/{data}/*.pkl"
       skip_existing: True
+      classification: False
+      vega_models: "resources/vega_models_withclasses.xlsx"      
     grid:
       #data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
       data: "{{vega_regr}}"
       input_key: "{{input_key}}"
       ncm_code: ["rfecfp"]        
+
+
+  - source: tasks/mapie_apply.py
+    name: "class_apply_[[input_key]]_[[data]]_[[ncm_code]]"
+    upstream: ["classification_summary_mapie"]
+    #upstream: []
+    product: 
+      nb: "{{VEGA_CP_OUTPUT}}/[[input_key]]//{{class_folder}}/notebook_[[data]]_[[ncm_code]].ipynb"
+      results: "{{VEGA_CP_OUTPUT}}/[[input_key]]/{{class_folder}}/report_cp_[[data]]_[[ncm_code]].xlsx"
+    params:
+      config: "{{config}}"
+      cache_path: "products/ecfp4_cache.db"
+      ncmodel: "products/mapie/vega/{{class_folder}}/{ncm_code}/{data}/*.pkl"
+      skip_existing: True
+      classification: True
+      vega_models: "resources/vega_models_withclasses.xlsx"      
+    grid:
+      #data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
+      data: "{{vega_class}}"
+      input_key: "{{input_key}}"
+      ncm_code: ["crfecfp"]        
 
 
   - source: tasks/solr/chemicals.py
