@@ -11,6 +11,93 @@ alpha = 0.1
 # -
 
 
+"""
+NCM-Based Pseudo-Probabilistic Conformal Prediction
+
+This approach bridges the gap between hard-prediction classifiers and probability-based conformal methods.
+Since the external toxicity classifier only provides hard class predictions (e.g., "toxicity = 2") without
+confidence scores, we cannot directly use standard MAPIE conformity scores like LAC (Least Ambiguous Classifier),
+which require predict_proba(). To solve this, we train a separate Nonconformity Measure (NCM) model that learns
+to predict the probability distribution over ordinal distances: P(distance = 0, 1, 2, 3 | molecule). During prediction,
+we convert these distance probabilities into pseudo-class probabilities using the relationship: 
+    P(class = j | molecule, ŷ) = P(distance = |j - ŷ| | molecule). 
+
+For example, if the external model predicts class ŷ=1 and the NCM outputs [0.6, 0.3, 0.08, 0.02] for distances [0,1,2,3],
+we first assign raw pseudo-probabilities:
+    - P_raw(class=0) = P(distance=|0-1|=1) = 0.3
+    - P_raw(class=1) = P(distance=|1-1|=0) = 0.6  ← predicted class
+    - P_raw(class=2) = P(distance=|2-1|=1) = 0.3
+    - P_raw(class=3) = P(distance=|3-1|=2) = 0.08
+
+Since classes 0 and 2 are both distance 1 from the prediction, they share the probability mass P(distance=1)=0.3.
+We normalize to ensure valid probabilities: sum = 0.6 + 0.3 + 0.3 + 0.08 = 1.28, giving final probabilities:
+    - P(class=0) = 0.3/1.28 = 0.234
+    - P(class=1) = 0.6/1.28 = 0.469  ← highest (predicted class)
+    - P(class=2) = 0.3/1.28 = 0.234
+    - P(class=3) = 0.08/1.28 = 0.063
+
+These synthetic probabilities encode both the hard prediction (highest probability at predicted class) and uncertainty
+(spread reflects NCM's confidence). We then feed these pseudo-probabilities into MAPIE's standard LAC conformity score,
+which computes conformity as the difference between top predicted probability and each class's probability. This allows
+us to leverage MAPIE's proven conformal framework while working with hard predictions, combining the ordinal structure
+awareness of our NCM with the rigorous coverage guarantees of split conformal prediction.
+
+NCM-Based Pseudo-Probabilistic Conformal Prediction for New Compounds
+
+When predicting on a new, unseen compound:
+
+Step 1: External Classifier Prediction
+The pre-trained external toxicity classifier outputs a hard class prediction: ŷ_new (e.g., toxicity class = 2). 
+This prediction is deterministic with no confidence score.
+
+Step 2: NCM Distance Prediction
+The trained NCM model takes the compound's ECFP fingerprint as input and predicts the probability distribution
+over how far the external classifier's prediction is likely to be from the true class:
+    NCM(ECFP_new) → [P(distance=0), P(distance=1), P(distance=2), P(distance=3)]
+For example: [0.5, 0.35, 0.12, 0.03], indicating the model expects the prediction to be correct (distance=0)
+with 50% probability, off by 1 class with 35% probability, etc.
+
+Step 3: Convert to Class Pseudo-Probabilities
+Given ŷ_new=2 and NCM output [0.5, 0.35, 0.12, 0.03], we compute pseudo-probabilities for each possible class:
+    - P_raw(class=0) = P(distance=|0-2|=2) = 0.12
+    - P_raw(class=1) = P(distance=|1-2|=1) = 0.35
+    - P_raw(class=2) = P(distance=|2-2|=0) = 0.5   ← predicted class (highest)
+    - P_raw(class=3) = P(distance=|3-2|=1) = 0.35
+
+Classes 1 and 3 share the same probability because they're equidistant from the prediction (ordinal symmetry).
+Normalizing: sum = 0.12 + 0.35 + 0.5 + 0.35 = 1.32, so:
+    - P(class=0) = 0.12/1.32 = 0.091
+    - P(class=1) = 0.35/1.32 = 0.265
+    - P(class=2) = 0.5/1.32 = 0.379  ← highest
+    - P(class=3) = 0.35/1.32 = 0.265
+
+Step 4: LAC Conformity Score
+MAPIE's LAC score computes, for each class j:
+    score(j) = P(ŷ_new) - P(class=j) = P(class=2) - P(class=j)
+    
+    - score(class=0) = 0.379 - 0.091 = 0.288
+    - score(class=1) = 0.379 - 0.265 = 0.114
+    - score(class=2) = 0.379 - 0.379 = 0.000  ← predicted class (lowest score)
+    - score(class=3) = 0.379 - 0.265 = 0.114
+
+Step 5: Build Prediction Set
+During calibration, a threshold τ was computed (e.g., τ = 0.15). The prediction set includes all classes where:
+    score(j) ≤ τ
+
+In this example:
+    - class=0: 0.288 > 0.15 → excluded
+    - class=1: 0.114 ≤ 0.15 → included
+    - class=2: 0.000 ≤ 0.15 → included (predicted class always in set)
+    - class=3: 0.114 ≤ 0.15 → included
+
+Final prediction set: {1, 2, 3}
+
+Interpretation: While the external classifier predicts class 2, the conformal system indicates the true toxicity
+could reasonably be class 1, 2, or 3 with 90% confidence, reflecting the uncertainty captured by the NCM model.
+If the NCM had been more confident (higher P(distance=0)), the set would be smaller (possibly just {2}). If less
+confident (flatter distribution), the set would include class 0 as well.
+"""
+
 def plot_ncm_coverage_comparison(df, output_path=None):
     """
     Create comprehensive visualization comparing NCM model performance.
@@ -130,7 +217,7 @@ def plot_ncm_coverage_comparison(df, output_path=None):
             patch.set_facecolor('#e74c3c')  # Red for regressors
     
     # Target line
-    ax2.axvline(1-alpha, color='blue', linestyle='--', linewidth=2, 
+    ax2.axhline(1-alpha, color='blue', linestyle='--', linewidth=2, 
                 label=f'Target ({100*(1-alpha)}%)', alpha=0.7)    
     
     ax2.set_ylabel('Calibration Coverage', fontsize=12, fontweight='bold')

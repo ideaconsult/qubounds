@@ -37,7 +37,8 @@ tasks:
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
       skip_existing: True
-      vega_models: "resources/vega_models_withclasses.xlsx"      
+      vega_models: "resources/vega_models_withclasses.xlsx"
+      method_score: "LAC"      
     grid:
       ncm: ["crfecfp", "cmlpecfp", "cgbecfp", "chgbecfp", "cmordecfp", "ladecfp", "ogbecfp", "omlpecfp", "knnjecfp","cknnecfp","rfecfp","gbecfp"]  
       #data: ["ALGAE_COMBASECLASS"]
@@ -60,13 +61,24 @@ tasks:
       data: "products/mapie/vega/{{class_folder}}/summary.xlsx"              
 
   - source: tasks/mapie_class_analysis.py
-    name: "mapie_class_analysis"
+    name: "mapieanalysis_class"
     upstream: ["classification_summary_mapie"]
     product: 
       nb: "products/mapie/vega/{{class_folder}}/mapie_class_analysis.ipynb"
       data: "products/mapie/vega/{{class_folder}}"
     params:
       alpha: 0.1    
+
+
+  - source: tasks/mapie_regression_analysis.py
+    name: "mapieanalysis_regr"
+    upstream: ["regression_summary_mapie"]
+    product: 
+      nb: "products/mapie/vega/regression/mapie_regr_analysis.ipynb"
+      data: "products/mapie/vega/regression"
+    params:
+      alpha: 0.1    
+
 
   - source: tasks/mapie_apply.py
     name: "mapier_apply_[[input_key]]_[[data]]_[[ncm_code]]"

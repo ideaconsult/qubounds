@@ -72,7 +72,6 @@ else:
         # big test set, will split into calibration and test        
         df_calibration, test_df = train_test_split(df_calibration, test_size=0.5, random_state=42)
 
-
     train_conformal_regression(
         train_df[train_cols],
         experimental_tag,

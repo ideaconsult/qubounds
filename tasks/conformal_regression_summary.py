@@ -15,7 +15,9 @@ logger = init_logging(Path(product["nb"]).parent / "logs", "report.log")
 combined_df = pd.DataFrame()
 for key_star in upstream:
     for key in upstream[key_star]:
-        model_path = upstream[key_star][key]["ncmodel"] 
+        model_path = upstream[key_star][key].get("ncmodel", None)
+        if model_path is None:
+            continue
         sigma_model = {}
         with open(model_path, "rb") as f:
             sigma_model = pickle.load(f)

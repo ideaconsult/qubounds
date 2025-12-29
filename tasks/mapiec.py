@@ -19,7 +19,9 @@ id = "Smiles"
 skip_existing = True
 vega_models = None
 ncm = None
+method_score="LAC"
 # -
+
 
 logger = init_logging(Path(product["nb"]).parent / "logs", "report.log")
 
@@ -88,7 +90,8 @@ else:
         cache_path=cache_path,
         alpha=0.1,
         output_model_path=product["ncmodel"],
-        ncm=ncm
+        ncm=ncm,
+        method_score=method_score
     )
 
     results = {}
