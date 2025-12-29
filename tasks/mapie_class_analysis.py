@@ -367,7 +367,7 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
     bp['boxes'][1].set_facecolor('#e74c3c')  # Red for regressors
     
     # Add target line
-    ax.axvline(1-alpha, color='blue', linestyle='--', linewidth=2, 
+    ax.axhline(1-alpha, color='blue', linestyle='--', linewidth=2, 
                 label=f'Target ({100*(1-alpha)}%)', alpha=0.7)    
     
     # Add mean markers
