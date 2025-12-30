@@ -5,7 +5,8 @@ from tasks.descriptors.ecfp import init_cache
 from tasks.mapie_regression import predict_conformal, clean_regrdataset
 from tasks.mapie_class_lac import predict_conformal_classifier_chunked
 from tasks.vega.utils_vega import (
-    load_vega_report, writeExcel_epa, get_adi_cols, clean_vega_report_df, 
+    load_vega_report, replace_labels_with_keys,
+    writeExcel_epa, get_adi_cols, clean_vega_report_df, 
     get_main_prediction, clean_classdataset, get_class_values)
 from tasks.assessment.utils import init_logging
 import traceback
@@ -68,17 +69,23 @@ else:
         main_column, main_unit, main_index = get_main_prediction(data, predicted_columns)    
         logger.info(f"{data}\t{main_column}, {main_unit}, {main_index}")
         logger.debug(f"*********** {df.columns}")
-        df = df[["ID", "Smiles", main_column]]
+        _cols = ["ID", "Smiles", main_column]
+        if "ADI" in df.columns:
+            _cols.append("ADI")
+        if "Experimental" in df.columns:
+            _cols.extend(["Experimental"])
+        df = df[_cols]
         values_to_drop = ["-", np.nan]
         df = df[~df[main_column].isin(values_to_drop)]    
         logger.debug("{data}\tpredict_conformal start")
         start_time = time.time()
         if classification:
             classvalues_dict = get_class_values(vega_models, data)
-            df, label_pred = clean_classdataset(df, main_column, classvalues_dict)               
+            df, exp_numeric = replace_labels_with_keys(df, "Experimental", classvalues_dict)            
+            df, label_pred = clean_classdataset(df, main_column, classvalues_dict)
             result_df, metrics_per_model = predict_conformal_classifier_chunked(
                 df, pred_column=label_pred,
-                true_column="Experimental",
+                true_column=exp_numeric,
                 model_path=_ncmodel_path,
                 tag=data,
                 smiles_column="Smiles",
