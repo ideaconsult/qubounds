@@ -43,15 +43,21 @@ else:
 
     # Load calibration data
     df_calibration = pd.read_excel(input_file, sheet_name="Test")
-    df_calibration, label_pred = clean_classdataset(df_calibration, predicted_tag, classvalues_dict)
-
     test_df = pd.read_excel(input_file, sheet_name="Test")
-    test_df, label_pred_test = clean_classdataset(test_df, predicted_tag, classvalues_dict)    
-
     df_train = pd.read_excel(input_file, sheet_name="Training")
-    df_train, label_pred_train = clean_classdataset(df_train, predicted_tag, classvalues_dict)    
 
-    logger.info(f"Calibration: {label_pred} Test: {label_pred_test} Train: {label_pred_train}")
+    if method_score.endswith("_proba"):
+        label_pred = predicted_tag
+        label_pred_test = predicted_tag
+        class_values = df_train[predicted_tag].unique()
+        experimental_tag = "Experimental"
+        label_pred_train = {value: f"P({value})" for value in class_values}
+        logger.info(f"{experimental_tag}\t{label_pred_train}")
+    else:
+        df_calibration, label_pred = clean_classdataset(df_calibration, predicted_tag, classvalues_dict)        
+        test_df, label_pred_test = clean_classdataset(test_df, predicted_tag, classvalues_dict)            
+        df_train, label_pred_train = clean_classdataset(df_train, predicted_tag, classvalues_dict)    
+        logger.info(f"Calibration: {label_pred} Test: {label_pred_test} Train: {label_pred_train}")
 
     train_conformal_classifier(
         df_train=df_train,
