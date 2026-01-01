@@ -558,3 +558,60 @@ def get_class_values(vega_models, data):
     logger.info(classvalues_str)
     classvalues_dict = parse_classvalues(classvalues_str)
     return classvalues_dict
+
+
+# Precompiled patterns
+FIXED_PATTERNS = [
+    re.compile(r"^Probability\((?P<class>.+)\)$", re.IGNORECASE),
+    re.compile(r"^Probability\s+for\s+(?P<class>.+)$", re.IGNORECASE),
+    re.compile(r"^P\((?P<class>.+)\)$", re.IGNORECASE),
+    re.compile(r"^(?P<class>.+)\s+Probability$", re.IGNORECASE),
+]
+
+
+def map_class_to_probability_label(class_values, labels, patterns=FIXED_PATTERNS):
+    """
+    Map classes to labels using fixed regex patterns.
+
+    Parameters
+    ----------
+    class_values : list of str
+        Classes to map.
+    labels : list of str
+        Candidate labels (may include unrelated labels).
+    patterns : list of compiled regex patterns
+        Patterns must contain a named group 'class'.
+
+    Returns
+    -------
+    dict: {class_value: label}
+
+    Raises
+    ------
+    KeyError if a class cannot be matched
+    """
+    class_to_label = {}
+
+    # normalize labels (strip whitespace)
+    labels = [lbl.strip() for lbl in labels]
+
+    for cls in class_values:
+        cls_lower = cls.lower()
+        matched = False
+
+        for lbl in labels:
+            for pat in patterns:
+                m = pat.fullmatch(lbl)
+                if m:
+                    label_class = m.group("class").strip().lower()
+                    if label_class == cls_lower:
+                        class_to_label[cls] = lbl
+                        matched = True
+                        break
+            if matched:
+                break
+
+        if not matched:
+            raise KeyError(f"No label found for class value: {cls}")
+
+    return class_to_label

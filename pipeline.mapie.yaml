@@ -46,6 +46,27 @@ tasks:
       data: "{{vega_class}}"
 
 
+  - source: tasks/mapiec.py
+    name: "mapiecproba_[[data]]_[[ncm]]"
+    product: 
+      nb: "products/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.ipynb"
+      data: "products/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.xlsx"
+      ncmodel: "products/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.pkl"
+    params:
+      input_folder: "products/vega/classification"
+      alpha: 0.1
+      calculate_coverage_metrics: True
+      id: "Smiles"
+      cache_path: "products/mapie/ecfp4_cache.db"
+      skip_existing: False
+      vega_models: "resources/vega_models_withclasses.xlsx"
+      method_score: "LAC_proba"      
+    grid:
+      ncm: ["rfecfp"]  
+      #data: ["CARC_CAESAR"]
+      #data: ["AROM_IRMFN"]
+      data: "{{vega_pclass}}"
+
 
   - source: tasks/conformal_regression_summary.py
     name: "regression_summary_mapie"

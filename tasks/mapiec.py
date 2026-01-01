@@ -3,9 +3,9 @@ import numpy as np
 import pandas as pd
 from tasks.descriptors.ecfp import init_cache
 from tasks.mapie_class_lac import (
-    train_conformal_classifier, predict_conformal_classifier)
+    train_conformal_classifier, predict_conformal_classifier_chunked)
 from tasks.vega.utils_vega import (
-    get_class_values, clean_classdataset)
+    get_class_values, clean_classdataset, map_class_to_probability_label)
 from tasks.assessment.utils import init_logging
 from pathlib import Path
 from tasks.mapie_diagnostic import plot_conformal_diagnostics
@@ -33,7 +33,7 @@ if skip_existing and os.path.exists(product["ncmodel"]) and os.path.exists(produ
 else:
     conn = init_cache(cache_path)
     # --- Load Data ---
-    classvalues_dict = get_class_values(vega_models, data)
+
     conn = init_cache(cache_path)
     np.random.seed(42)
     input_file = os.path.join(input_folder, f"{data}.xlsx")
@@ -48,12 +48,16 @@ else:
 
     if method_score.endswith("_proba"):
         label_pred = predicted_tag
-        label_pred_test = predicted_tag
+        class_values = test_df[predicted_tag].unique()
         class_values = df_train[predicted_tag].unique()
         experimental_tag = "Experimental"
-        label_pred_train = {value: f"P({value})" for value in class_values}
-        logger.info(f"{experimental_tag}\t{label_pred_train}")
+        predicted_tags = meta.loc[meta[0] == "Property Description", 1].values[0].split(";")
+        logger.info(f"LABELS {class_values}\t{predicted_tags}")
+        label_pred_train = map_class_to_probability_label(class_values, predicted_tags)
+        label_pred_test = label_pred_train
+        logger.info(f"LABELS {experimental_tag}\t{label_pred_train}")
     else:
+        classvalues_dict = get_class_values(vega_models, data)
         df_calibration, label_pred = clean_classdataset(df_calibration, predicted_tag, classvalues_dict)        
         test_df, label_pred_test = clean_classdataset(test_df, predicted_tag, classvalues_dict)            
         df_train, label_pred_train = clean_classdataset(df_train, predicted_tag, classvalues_dict)    
@@ -77,8 +81,10 @@ else:
                     [test_df, df_train, df_calibration], 
                     ["Prediction Intervals", "Training PI", "Calibration PI"]))
     for (split, df, sheet_name) in _all:
-        result_df, metrics_per_model = predict_conformal_classifier(
-            df, pred_column=label_pred_test,
+        logger.info(f"{split} {df.columns}")
+        result_df, metrics_per_model = predict_conformal_classifier_chunked(
+            df, 
+            pred_column=label_pred_test,
             true_column=experimental_tag,
             model_path=product["ncmodel"],
             tag=data
