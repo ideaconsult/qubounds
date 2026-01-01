@@ -60,9 +60,10 @@ tasks:
       cache_path: "products/mapie/ecfp4_cache.db"
       skip_existing: False
       vega_models: "resources/vega_models_withclasses.xlsx"
+      prob_columns: "{{vega_class_plabel}}"
       method_score: "LAC_proba"      
     grid:
-      ncm: ["rfecfp"]  
+      ncm: ["rfecfp", "gbecfp", "knnecfp"]  
       #data: ["CARC_CAESAR"]
       #data: ["AROM_IRMFN"]
       data: "{{vega_pclass}}"

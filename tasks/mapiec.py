@@ -10,6 +10,7 @@ from tasks.assessment.utils import init_logging
 from pathlib import Path
 from tasks.mapie_diagnostic import plot_conformal_diagnostics
 
+
 # + tags=["parameters"]
 input_folder = None
 data = None
@@ -21,6 +22,7 @@ skip_existing = True
 vega_models = None
 ncm = None
 method_score="LAC"
+prob_columns = {}
 # -
 
 
@@ -47,13 +49,20 @@ else:
     df_train = pd.read_excel(input_file, sheet_name="Training")
 
     if method_score.endswith("_proba"):
+        test_df, _ = clean_classdataset(test_df, predicted_tag)
+        df_train, _ = clean_classdataset(df_train, predicted_tag)
+        df_calibration, _ = clean_classdataset(df_calibration, predicted_tag)
         label_pred = predicted_tag
         class_values = test_df[predicted_tag].unique()
         class_values = df_train[predicted_tag].unique()
         experimental_tag = "Experimental"
-        predicted_tags = meta.loc[meta[0] == "Property Description", 1].values[0].split(";")
-        logger.info(f"LABELS {class_values}\t{predicted_tags}")
-        label_pred_train = map_class_to_probability_label(class_values, predicted_tags)
+        predicted_tags = prob_columns.get(data, None)
+        if predicted_tags is None:
+            predicted_tags = meta.loc[meta[0] == "Property Description", 1].values[0].split(";")
+            logger.info(f"LABELS {class_values}\t{predicted_tags}")
+            label_pred_train = map_class_to_probability_label(class_values, predicted_tags)
+        else:
+            label_pred_train = predicted_tags
         label_pred_test = label_pred_train
         logger.info(f"LABELS {experimental_tag}\t{label_pred_train}")
     else:

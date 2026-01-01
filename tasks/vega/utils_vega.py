@@ -540,10 +540,13 @@ def clean_classdataset(df, model=None, classvalues_dict=None):
     logger.info(df[model].unique())
     cleaned_df = df[~df[model].isin(values_to_drop)]
     logger.info(f"Drop not classifiable {df.shape} --> {cleaned_df.shape}")
-    cleaned_df, label_pred = replace_labels_with_keys(
-        cleaned_df, model, classvalues_dict) 
-    logger.info(cleaned_df[label_pred].unique())   
-    return cleaned_df, label_pred
+    if classvalues_dict is not None:
+        cleaned_df, label_pred = replace_labels_with_keys(
+            cleaned_df, model, classvalues_dict) 
+        logger.info(cleaned_df[label_pred].unique())   
+        return cleaned_df, label_pred
+    else:
+        return cleaned_df, None
 
 
 def get_class_values(vega_models, data):
