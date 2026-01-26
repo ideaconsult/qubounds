@@ -3,10 +3,12 @@ import numpy as np
 import logging
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.neighbors import KNeighborsRegressor, RadiusNeighborsRegressor, KNeighborsClassifier
+from sklearn.linear_model import Ridge
 from sklearn.ensemble import (
     RandomForestRegressor, GradientBoostingRegressor, GradientBoostingClassifier,
     HistGradientBoostingClassifier)
 from sklearn.ensemble import RandomForestClassifier
+from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.neural_network import MLPClassifier
 from mord import LogisticAT, LAD  # or LogisticIT, LogisticSE
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
@@ -271,7 +273,25 @@ def make_sigma_model(ncm):
             n_estimators=100,
             random_state=42
         )
-    
+    elif ncm == "rlgbmecfp":    
+        return LGBMRegressor(
+            objective="huber",
+            #early_stopping_rounds=50
+        )            
+    elif ncm == "clgbmecfp":    
+        return LGBMClassifier(
+            objective="huber",
+            alpha=0.9,
+            num_leaves=64,
+            max_depth=-1,
+            learning_rate=0.05,
+            n_estimators=100,
+            subsample=0.8,
+            colsample_bytree=0.7,
+            min_split_gain=0.01,
+            lambda_l2=5,
+            early_stopping_rounds=50
+        )        
     elif ncm == "rnrecfp":
         return RadiusNeighborsRegressor(
             radius=0.3,
@@ -285,12 +305,21 @@ def make_sigma_model(ncm):
             weights="distance",     # similarity-based uncertainty
             p=1
         )
-    elif ncm == "knnecfp2":
+    elif ncm == "knn2ecfp":
         return KNeighborsRegressor(
             n_neighbors=2,          # intentional AD behavior
             weights="distance",     # similarity-based uncertainty
-            p=2
-        )    
+            p=1
+        )
+    elif ncm == "knn2jecfp":
+        return KNeighborsRegressor(
+            n_neighbors=2,          # intentional AD behavior
+            weights="distance",  
+            metric="jaccard"
+        )       
+    elif ncm == "ridgeecfp":
+        return Ridge(
+        )          
     elif ncm == "knnjecfp":
         return KNeighborsRegressor(
             n_neighbors=5,          # intentional AD behavior
@@ -409,13 +438,18 @@ def plot_normalized_residuals(
     bins="auto",
     log_scale=False,
     title="Normalized residual distributions",
-    confidence_score=0.9
+    confidence_score=0.9,
+    save_path=None
 ):
     """
     Plot distributions of normalized residuals S = |y - y_hat| / sigma_hat
+
+    Parameters
+    ----------
+    save_path : str or None
+        If provided, path where the figure will be saved (e.g. "residuals.png")
     """
 
-    #plt.figure(figsize=(7, 5))
     plt.figure(figsize=(9, 4))
 
     # Calibration
@@ -452,7 +486,6 @@ def plot_normalized_residuals(
 
     q = np.quantile(scores_cal, confidence_score)
     plt.axvline(q, linestyle="--", label=f"Calibration q at {confidence_score}")
-    #plt.xlim(0, np.quantile(scores_cal, 0.99))
 
     if log_scale:
         plt.yscale("log")
@@ -462,6 +495,11 @@ def plot_normalized_residuals(
     plt.title(title)
     plt.legend()
     plt.tight_layout()
+
+    # ---- Save if requested ----
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
     plt.show()
 
 
@@ -958,7 +996,8 @@ def plot_interval_width_histogram(
     labels=None,
     figsize=(6, 4),
     show_residual_hist=False,
-    absolute_residuals=False
+    absolute_residuals=False,
+    save_path=None
 ):
     """
     Plot histogram(s) of prediction interval widths.
@@ -993,7 +1032,7 @@ def plot_interval_width_histogram(
                 widths,
                 bins=bins,
                 alpha=0.5,
-                edgecolor="black",
+                edgecolor="none",
                 label=label
             )
         except Exception as err:
@@ -1020,7 +1059,7 @@ def plot_interval_width_histogram(
                     residuals,
                     bins=bins,
                     alpha=0.5,
-                    edgecolor="black",
+                    edgecolor="none",
                     label=label
                 )
             except Exception as err:
@@ -1030,6 +1069,7 @@ def plot_interval_width_histogram(
                 residuals,
                 widths,                
                 alpha=0.6,
+                s=3,
                 label=label
             )
 
@@ -1044,9 +1084,12 @@ def plot_interval_width_histogram(
         if labels is not None:
             ax_r.legend()
             ax_s.legend()
+    plt.tight_layout()    
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
-    plt.tight_layout()
     plt.show()
+
 
 
 def plot_prediction_intervals_index(result_df, model, n_points=100):

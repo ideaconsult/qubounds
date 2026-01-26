@@ -20,7 +20,7 @@ tasks:
       skip_existing: True
     grid:
       #ncm: ["rfecfp", "gbecfp", "knnecfp", "knnjecfp", "knnecfp2"]    
-      ncm: ["rfecfp", "gbecfp", "knnecfp"]    
+      ncm: ["rfecfp", "knn2ecfp", "rlgbmecfp"]    
       data: "{{vega_regr}}"
       #ncm: ["knnecfp", "rfecfp", "gbecfp"]
  
@@ -140,7 +140,8 @@ tasks:
       #data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
       data: "{{vega_regr}}"
       input_key: "{{input_key}}"
-      ncm_code: ["rfecfp"]        
+      #ncm_code: ["rfecfp"]        
+      ncm_code: ["rlgbmecfp"]        
 
 
   - source: tasks/mapie_apply.py

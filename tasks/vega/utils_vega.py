@@ -451,7 +451,7 @@ def writeExcel_epa(output_file, model_json,
 
 
 def get_adi_cols():
-    return ["Similarity index", "Accuracy index",
+    return ["ADI", "Similarity index", "Accuracy index",
                          "Predicted LogP (Meylan/Kowwin)", "MW", "MolecularWeight"]
     #    return ["Similarity index","Accuracy index",
     #                     "Concordance index",
