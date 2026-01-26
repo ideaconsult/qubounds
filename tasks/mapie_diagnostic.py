@@ -11,6 +11,8 @@ from sklearn.neural_network import MLPClassifier
 from mord import LogisticAT, LAD  # or LogisticIT, LogisticSE
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
 from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+import pandas as pd
+
 
 import matplotlib.pyplot as plt
 
@@ -285,7 +287,7 @@ def make_sigma_model(ncm):
         )
     elif ncm == "knnecfp2":
         return KNeighborsRegressor(
-            n_neighbors=5,          # intentional AD behavior
+            n_neighbors=2,          # intentional AD behavior
             weights="distance",     # similarity-based uncertainty
             p=2
         )    
@@ -477,13 +479,13 @@ def plot_interval_widths(widths, bins="auto", title="", quantile=None):
     plt.show()
 
 
-def plot_prediction_intervals(result_df, model, n_points=100):
+def plot_prediction_intervals(result_df, model, n_points=1000, figsize=(6,4)):
     """
     Plot predicted values and prediction intervals vs. the true target value.
 
     Parameters:
         result_df (pd.DataFrame): DataFrame containing true, predicted, and interval values.
-        model (str): Column prefix for the model (e.g., "rf", "xgb").
+        model (str): Column prefix for the model (e.g., "BCF_MEYLAN").
         n_points (int): Number of points to plot (sampled randomly).
     """
     sample = result_df.sample(n=min(n_points, len(result_df)))
@@ -494,7 +496,7 @@ def plot_prediction_intervals(result_df, model, n_points=100):
     y_lower = sample[f"{model}_lower"]
     y_upper = sample[f"{model}_upper"]
 
-    plt.figure()
+    plt.subplots(figsize=figsize)
     plt.plot(x, y_pred, label="Predicted", marker='x', linestyle='', color='blue')
     plt.fill_between(x, y_lower, y_upper, alpha=0.3, label="Prediction Interval", color='orange')
     plt.plot(x, x, label="Ideal (y = x)", linestyle='--', color='gray')  # Optional y=x line
@@ -947,3 +949,120 @@ def plot_conformal_diagnostics(
     logger.info(f"Diagnostic plots saved to {output_dir}/{base_name}_*.png")
     
     return figures
+
+
+def plot_interval_width_histogram(
+    result_df,
+    model,
+    bins="auto",
+    labels=None,
+    figsize=(6, 4),
+    show_residual_hist=False,
+    absolute_residuals=False
+):
+    """
+    Plot histogram(s) of prediction interval widths.
+    Optionally:
+      - Residual histogram
+      - Residuals vs interval widths scatter
+
+    Residual = model_true - model_pred
+    """
+
+    # ---- Backward compatibility ----
+    if isinstance(result_df, pd.DataFrame):
+        result_df = [result_df]
+
+    if labels is not None and len(labels) != len(result_df):
+        raise ValueError("Number of labels must match number of DataFrames")
+
+    # ---- Figure layout ----
+    if show_residual_hist:
+        fig, axes = plt.subplots(1, 3, figsize=figsize)
+        ax_w, ax_r, ax_s = axes
+    else:
+        fig, ax_w = plt.subplots(figsize=figsize)
+        ax_r = ax_s = None
+
+    # ---- Interval width histograms ----
+    for i, df in enumerate(result_df):
+        widths = df[f"{model}_upper"] - df[f"{model}_lower"]
+        label = labels[i] if labels is not None else None
+        try:
+            ax_w.hist(
+                widths,
+                bins=bins,
+                alpha=0.5,
+                edgecolor="black",
+                label=label
+            )
+        except Exception as err:
+            logger.error(err)
+    ax_w.set_xlabel("Prediction Interval Width")
+    ax_w.set_ylabel("Count")
+    ax_w.set_title(f"{model}: Interval Widths")
+
+    if labels is not None:
+        ax_w.legend()
+
+    # ---- Residual-related plots ----
+    if show_residual_hist:
+        for i, df in enumerate(result_df):
+            residuals = abs(df[f"{model}_true"] - df[f"{model}_pred"])
+            if absolute_residuals:
+                residuals = residuals.abs()
+
+            widths = df[f"{model}_upper"] - df[f"{model}_lower"]
+            label = labels[i] if labels is not None else None
+
+            try:
+                ax_r.hist(
+                    residuals,
+                    bins=bins,
+                    alpha=0.5,
+                    edgecolor="black",
+                    label=label
+                )
+            except Exception as err:
+                logger.error(err)
+            # Scatter
+            ax_s.scatter(
+                residuals,
+                widths,                
+                alpha=0.6,
+                label=label
+            )
+
+        ax_r.set_xlabel("Residual |True - Predicted|")
+        ax_r.set_ylabel("Count")
+        ax_r.set_title(f"{model}: Residuals")
+
+        ax_s.set_xlabel("Residual")
+        ax_s.set_ylabel("Prediction Interval Width")
+        ax_s.set_title(f"{model}: Residuals vs Interval Width")
+
+        if labels is not None:
+            ax_r.legend()
+            ax_s.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_prediction_intervals_index(result_df, model, n_points=100):
+    sample = result_df.sample(n=min(n_points, len(result_df))).sort_values(by=f"{model}_true")
+    plt.figure()
+    plt.plot(sample[f"{model}_true"].values, label="True", marker='o', linestyle='')
+    plt.plot(sample[f"{model}_pred"].values, label="Predicted", marker='x', linestyle='')
+    plt.fill_between(
+        x=range(len(sample)),
+        y1=sample[f"{model}_lower"],
+        y2=sample[f"{model}_upper"],
+        alpha=0.3,
+        label="Prediction Interval"
+    )
+    plt.legend()
+    plt.title(f"{model}: Prediction Intervals (sample of {n_points})")
+    plt.xlabel("Sample Index (sorted by true value)")
+    plt.ylabel("Target")
+    plt.show()

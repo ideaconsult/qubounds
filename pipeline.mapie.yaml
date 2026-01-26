@@ -25,6 +25,21 @@ tasks:
       #ncm: ["knnecfp", "rfecfp", "gbecfp"]
  
 
+  - source: tasks/mapie_plot.py
+    name: "mapieplot_regression_[[ncm]]"
+    upstream: ["mapie_*"]    
+    product: 
+      nb: "products/mapie/vega/regression/[[ncm]]/mapie_plot.ipynb"
+      #data: "products/mapie/vega/regression/[[ncm]]/{{data}}/mapie.xlsx"
+    params:
+      input_folder: "products/vega/regression"
+      vega_models: "resources/vega_models_withclasses.xlsx"        
+      mode: "regression"
+      data: "{{vega_regr}}"
+      data_: ["BCF_MEYLAN"]
+    grid:
+      ncm: ["rfecfp","knnecfp", "gbecfp"]
+
   - source: tasks/mapiec.py
     name: "mapiec_[[data]]_[[ncm]]"
     product: 
@@ -72,6 +87,8 @@ tasks:
   - source: tasks/conformal_regression_summary.py
     name: "regression_summary_mapie"
     upstream: ["mapie_*"]
+    params:
+      vega_models: "resources/vega_models_withclasses.xlsx"    
     product: 
       nb: "products/mapie/vega/regression/summary.ipynb"
       data: "products/mapie/vega/regression/summary.xlsx"        
@@ -79,6 +96,8 @@ tasks:
   - source: tasks/conformal_classification_summary.py
     name: "classification_summary_mapie"
     upstream: ["mapiec_*"]
+    params:
+      vega_models: "resources/vega_models_withclasses.xlsx"
     product: 
       nb: "products/mapie/vega/{{class_folder}}/summary.ipynb"
       data: "products/mapie/vega/{{class_folder}}/summary.xlsx"              
