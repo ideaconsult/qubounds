@@ -30,7 +30,8 @@ tasks:
     upstream: ["mapie_*"]    
     product: 
       nb: "products/mapie/vega/regression/[[ncm]]/mapie_plot.ipynb"
-      #data: "products/mapie/vega/regression/[[ncm]]/{{data}}/mapie.xlsx"
+      data: "products/mapie/vega/regression/[[ncm]]/spearman.xlsx"
+      plot: "products/mapie/vega/regression/[[ncm]]/spearman.png"
     params:
       input_folder: "products/vega/regression"
       vega_models: "resources/vega_models_withclasses.xlsx"        
@@ -38,7 +39,8 @@ tasks:
       data: "{{vega_regr}}"
       data_: ["BCF_MEYLAN"]
     grid:
-      ncm: ["rfecfp","knnecfp", "gbecfp"]
+      #ncm: ["rfecfp","knnecfp", "gbecfp"]
+      ncm: ["rfecfp", "knn2ecfp", "rlgbmecfp"] 
 
   - source: tasks/mapiec.py
     name: "mapiec_[[data]]_[[ncm]]"
@@ -73,7 +75,7 @@ tasks:
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: False
+      skip_existing: True
       vega_models: "resources/vega_models_withclasses.xlsx"
       prob_columns: "{{vega_class_plabel}}"
       method_score: "LAC_proba"      

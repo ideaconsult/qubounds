@@ -517,15 +517,17 @@ def plot_interval_widths(widths, bins="auto", title="", quantile=None):
     plt.show()
 
 
-def plot_prediction_intervals(result_df, model, n_points=1000, figsize=(6,4)):
+def plot_prediction_intervals(result_df, model, n_points=5000, figsize=(6,4), title=None):
     """
     Plot predicted values and prediction intervals vs. the true target value.
+    Optionally plot prediction interval width vs ADI if ADI column exists.
 
     Parameters:
         result_df (pd.DataFrame): DataFrame containing true, predicted, and interval values.
         model (str): Column prefix for the model (e.g., "BCF_MEYLAN").
         n_points (int): Number of points to plot (sampled randomly).
     """
+
     sample = result_df.sample(n=min(n_points, len(result_df)))
     sample = sample.sort_values(by=f"{model}_true")
 
@@ -534,16 +536,33 @@ def plot_prediction_intervals(result_df, model, n_points=1000, figsize=(6,4)):
     y_lower = sample[f"{model}_lower"]
     y_upper = sample[f"{model}_upper"]
 
-    plt.subplots(figsize=figsize)
-    plt.plot(x, y_pred, label="Predicted", marker='x', linestyle='', color='blue')
-    plt.fill_between(x, y_lower, y_upper, alpha=0.3, label="Prediction Interval", color='orange')
-    plt.plot(x, x, label="Ideal (y = x)", linestyle='--', color='gray')  # Optional y=x line
-    plt.xlabel("True Value")
-    plt.ylabel("Predicted Value / Interval")
-    plt.title(f"{model}: Prediction vs True with Conformal Intervals")
-    plt.legend()
-    plt.show()
+    has_ADI = "ADI" in sample.columns
 
+    # --- Create figure ---
+    if has_ADI:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(figsize[0]*2, figsize[1]))
+    else:
+        fig, ax1 = plt.subplots(figsize=figsize)
+
+    # --- First plot: prediction vs true ---
+    ax1.plot(x, y_pred, label="Predicted", marker='x', linestyle='', color='blue')
+    ax1.fill_between(x, y_lower, y_upper, alpha=0.3, label="Prediction Interval", color='orange')
+    ax1.plot(x, x, label="Ideal (y = x)", linestyle='--', color='gray')
+
+    ax1.set_xlabel("True Value")
+    ax1.set_ylabel("Predicted Value / Interval")
+    ax1.set_title(f"{model}: Prediction vs True [{title}]")
+    ax1.legend()
+
+    # --- Second plot: interval width vs ADI ---
+    if has_ADI:
+        ax2.scatter(sample["ADI"], sample["Relative Interval Width"], alpha=0.6)
+        ax2.set_xlabel("ADI")
+        ax2.set_ylabel("Relative Interval Width")
+        ax2.set_title("Interval Width vs ADI")
+
+    plt.tight_layout()
+    plt.show()
 
 
 # Wrap σ-model to always return positive scale
@@ -1109,3 +1128,13 @@ def plot_prediction_intervals_index(result_df, model, n_points=100):
     plt.xlabel("Sample Index (sorted by true value)")
     plt.ylabel("Target")
     plt.show()
+
+
+def mark_outlier(df, col, low=0.25, up=0.75):
+    Q1 = df[col].quantile(low)
+    Q3 = df[col].quantile(up)
+    IQR = Q3 - Q1
+    lower = Q1 - 1.5 * IQR
+    upper = Q3 + 1.5 * IQR
+    mask = (df[col] >= lower) & (df[col] <= upper)
+    return ~mask    

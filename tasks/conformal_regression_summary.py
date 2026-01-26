@@ -8,10 +8,12 @@ from tasks.assessment.utils import init_logging
 from tasks.vega.property_vector import (
     compute_quantile_bins
 )
+from tasks.mapie_diagnostic import mark_outlier
 import pickle
 from scipy import stats
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from IPython.display import display, Markdown, HTML
 
 
 # + tags=["parameters"]
@@ -224,13 +226,6 @@ def plot_ncm_quality_vs_efficiency(df, split='Test'):
         df_clean['sigma_r2'], 
         df_clean['Relative Interval Width']
     )
-    
-    # Linear regression
-    slope, intercept, r_value, p_value, std_err = stats.linregress(
-        df_clean['sigma_r2'],
-        df_clean['Relative Interval Width']
-    )
-    
     # Print statistics
     print(f"\n=== NCM Quality vs Interval Efficiency Statistics [{split}] ===")
     print(f"N datasets: {len(df_clean)}")
@@ -241,11 +236,22 @@ def plot_ncm_quality_vs_efficiency(df, split='Test'):
     print("\nSpearman correlation (rank-based, robust to outliers):")
     print(f"  ρ = {r_spearman:.4f}")
     print(f"  p-value = {p_spearman:.4g}")
-    print("\nLinear regression:")
-    print(f"  Width = {intercept:.4f} + {slope:.4f} × R²")
-    print(f"  R² = {r_value**2:.4f}")
-    print(f"  Std error = {std_err:.4f}")
-    
+
+    # Linear regression
+    try:
+        slope, intercept, r_value, p_value, std_err = stats.linregress(
+            df_clean['sigma_r2'],
+            df_clean['Relative Interval Width']
+        )
+        print("\nLinear regression:")
+        print(f"  Width = {intercept:.4f} + {slope:.4f} × R²")
+        print(f"  R² = {r_value**2:.4f}")
+        print(f"  Std error = {std_err:.4f}")        
+    except Exception as err:
+        intercept = None
+        print(err)
+
+   
     # Interpretation
     print("\nInterpretation:")
     if p_pearson < 0.05:
@@ -309,18 +315,19 @@ def plot_ncm_quality_vs_efficiency(df, split='Test'):
     )
     
     # Add regression equation as annotation
-    fig.add_annotation(
-        x=0.05, y=0.95,
-        xref='paper', yref='paper',
-        text=f'Width = {intercept:.3f} + {slope:.3f}×R²<br>' +
-             f'R² = {r_value**2:.3f}, p = {p_value:.3g}',
-        showarrow=False,
-        bgcolor='white',
-        bordercolor='black',
-        borderwidth=1,
-        font=dict(size=10),
-        align='left'
-    )
+    if intercept is not None:
+        fig.add_annotation(
+            x=0.05, y=0.95,
+            xref='paper', yref='paper',
+            text=f'Width = {intercept:.3f} + {slope:.3f}×R²<br>' +
+                f'R² = {r_value**2:.3f}, p = {p_value:.3g}',
+            showarrow=False,
+            bgcolor='white',
+            bordercolor='black',
+            borderwidth=1,
+            font=dict(size=10),
+            align='left'
+        )
     
     fig.update_layout(height=500)
     
@@ -522,7 +529,10 @@ combined_df['Relative Interval Width'] = (
     combined_df['Average Interval Width'] / 
     (combined_df['Max'] - combined_df['Min'])
 )
+combined_df["outlier"] = mark_outlier(combined_df, col='Relative Interval Width', low=0.05, up=0.95)
 combined_df.to_excel(product["data"], index=False)        
+
+combined_df = combined_df.loc[~combined_df["outlier"]]
 
 combined_df = combined_df.merge(
     df_models[["Key", "SSbD"]],
@@ -530,6 +540,7 @@ combined_df = combined_df.merge(
     right_on='Key',
     how='left'
 )
+
 
 # ============================================
 # Generate Visualizations
@@ -541,7 +552,7 @@ print("OVERALL NCM QUALITY vs EFFICIENCY ANALYSIS")
 print("="*70)
 
 combined_df['Split'] = combined_df['Split'].replace('Calibration', 'Test')
-combined_df = combined_df[combined_df["Relative Interval Width"]>0.0017] # knn
+# combined_df = combined_df[combined_df["Relative Interval Width"]>0.0017] # knn
 
 df_test_all = combined_df[combined_df['Split'].isin(['Test', 'Calibration'])].copy()
 
@@ -665,7 +676,7 @@ for ncm, group_df in combined_df.groupby('SSbD'):
     print(f"\n=== {ncm} ===")
     
     # 1. Main coverage-efficiency scatter (colored by SSbD, each point is a dataset)
-    print(group_df.describe())
+    display(group_df.describe())
     fig1 = plot_coverage_efficiency_scatter(
         group_df, 
         color_col="Dataset Name",  # Color by SSbD category
@@ -687,7 +698,8 @@ for ncm, group_df in combined_df.groupby('SSbD'):
     # 4. NCM quality vs efficiency
     if 'sigma_r2' in group_df.columns and group_df['sigma_r2'].notna().any():
         fig4 = plot_ncm_quality_vs_efficiency(group_df, split='Test')
-        fig4.show()
+        if fig4 is not None:
+            fig4.show()
     
 for ncm, group_df in combined_df.groupby('ncm'):
     # 5. Comprehensive dashboard

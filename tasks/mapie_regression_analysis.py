@@ -14,11 +14,6 @@ alpha = 0.1
 # -
 
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy import stats
-
 def plot_regression_ncm_comparison(df, output_path=None):
     """
     Create comprehensive 2x2 grid comparing NCM models for regression.
@@ -82,7 +77,7 @@ def plot_regression_ncm_comparison(df, output_path=None):
                 va='center', fontsize=10, fontweight='bold')
     
     ax1.set_xlabel('Mean Relative Interval Width', fontsize=12, fontweight='bold')
-    ax1.set_ylabel('NCM Model', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Auxiliary Model', fontsize=12, fontweight='bold')
     ax1.set_title('A) Interval Width Efficiency\n(Lower = Better)', 
                  fontsize=14, fontweight='bold')
     ax1.grid(axis='x', alpha=0.3)
@@ -180,9 +175,9 @@ def plot_regression_ncm_comparison(df, output_path=None):
                     xytext=(5, 5), textcoords='offset points',
                     fontsize=9, fontweight=fontweight)
     
-    ax3.set_xlabel('NCM Model Quality (R²)', fontsize=12, fontweight='bold')
+    ax3.set_xlabel('Auxiliary Model Quality (R²)', fontsize=12, fontweight='bold')
     ax3.set_ylabel('Mean Relative Interval Width', fontsize=12, fontweight='bold')
-    ax3.set_title('C) Does Better NCM → Narrower Intervals?', 
+    ax3.set_title('C) Does Better Auxiliary model → Narrower Intervals?', 
                  fontsize=14, fontweight='bold')
     ax3.legend(loc='best', fontsize=10)
     ax3.grid(True, alpha=0.3)
@@ -232,7 +227,7 @@ def plot_regression_ncm_comparison(df, output_path=None):
     ax4.grid(axis='y', alpha=0.3)
     
     # Overall title
-    fig.suptitle('Regression NCM Model Comparison', 
+    fig.suptitle('Regression Auxiliary Model Comparison', 
                 fontsize=16, fontweight='bold', y=0.995)
     
     plt.tight_layout()
@@ -296,8 +291,8 @@ def plot_coverage_by_ncm(df, output_path=None):
                va='center', fontsize=10, fontweight='bold')
     
     ax.set_xlabel('Mean Empirical Coverage', fontsize=12, fontweight='bold')
-    ax.set_ylabel('NCM Model', fontsize=12, fontweight='bold')
-    ax.set_title('Calibration Coverage by NCM Model\n(Target: 90%)', 
+    ax.set_ylabel('Auxiliary Model', fontsize=12, fontweight='bold')
+    ax.set_title('Calibration Coverage by Auxiliary Model\n(Target: 90%)', 
                 fontsize=14, fontweight='bold')
     ax.set_xlim(0.80, 0.95)
     ax.legend(loc='lower right', fontsize=11)
@@ -497,7 +492,7 @@ def plot_ncm_similarity_heatmap(df, output_path=None):
     ax2.set_yticks(np.arange(len(ncm_names)) - 0.5, minor=True)
     ax2.grid(which='minor', color='black', linestyle='-', linewidth=0.5)
     
-    fig.suptitle('NCM Model Similarity Analysis', fontsize=15, fontweight='bold')
+    fig.suptitle('Auxiliary Model Similarity Analysis', fontsize=15, fontweight='bold')
     plt.tight_layout()
     
     if output_path:
@@ -531,14 +526,14 @@ def analyze_regression_ncm_selection(df, output_path=None):
     df_test = df[df['Split'] == 'Test'].copy()
     
     print("=" * 80)
-    print("REGRESSION NCM MODEL SELECTION ANALYSIS")
+    print("REGRESSION Auxiliary MODEL SELECTION ANALYSIS")
     print("=" * 80)
     print()
     
     # ========================================
     # 1. Overall Performance by NCM
     # ========================================
-    print("1. OVERALL PERFORMANCE BY NCM MODEL")
+    print("1. OVERALL PERFORMANCE BY AUXILIARY MODEL")
     print("-" * 80)
     
     summary_stats = df_test.groupby('ncm').agg({
@@ -616,7 +611,7 @@ def analyze_regression_ncm_selection(df, output_path=None):
     # ========================================
     # 4. NCM Model Quality (sigma_r2)
     # ========================================
-    print("4. NCM MODEL QUALITY (R² - Higher = Better)")
+    print("4. AUXILIARY MODEL QUALITY (R² - Higher = Better)")
     print("-" * 80)
     
     ncm_quality = df_test.groupby('ncm')['sigma_r2'].agg(['mean', 'std'])
@@ -680,7 +675,7 @@ def analyze_regression_ncm_selection(df, output_path=None):
     
     f_stat, p_val = stats.f_oneway(*ncm_groups)
     
-    print("ANOVA: NCM models differ in Relative Interval Width?")
+    print("ANOVA: Auxiliary models differ in Relative Interval Width?")
     print(f"  F-statistic: {f_stat:.3f}")
     print(f"  p-value: {p_val:.6f}")
     print(f"  Result: {'YES - NCM choice matters' if p_val < 0.001 else 'NO - NCM choice irrelevant'}")
@@ -692,7 +687,7 @@ def analyze_regression_ncm_selection(df, output_path=None):
     
     f_stat_cov, p_val_cov = stats.f_oneway(*coverage_groups)
     
-    print("ANOVA: NCM models differ in Coverage?")
+    print("ANOVA: Auxiliary models differ in Coverage?")
     print(f"  F-statistic: {f_stat_cov:.3f}")
     print(f"  p-value: {p_val_cov:.6f}")
     print(f"  Result: {'YES' if p_val_cov < 0.001 else 'NO - Coverage similar (good!)'}")
@@ -701,7 +696,7 @@ def analyze_regression_ncm_selection(df, output_path=None):
     # ========================================
     # 8. Top Recommendations
     # ========================================
-    print("8. TOP 3 RECOMMENDED NCM MODELS")
+    print("8. TOP 3 RECOMMENDED AUXILIARY MODELS")
     print("-" * 80)
     
     top_3 = summary_stats.head(3)
@@ -857,6 +852,8 @@ def compare_ncm_variance(df):
 logger = init_logging(Path(product["nb"]).parent / "logs", "report.log")
 path_regr = upstream["regression_summary_mapie"]
 df = pd.read_excel(os.path.join(path_regr["data"]))
+df = df.loc[~df["outlier"]]
+df = df[df["Relative Interval Width"]>0.003] # knn
 
 # Main analysis
 summary = analyze_regression_ncm_selection(
