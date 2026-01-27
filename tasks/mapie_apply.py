@@ -92,14 +92,19 @@ else:
                 chunk_size=50000
             )
         else:
-            result_df, metrics_per_model = predict_conformal(
-                df, pred_column=main_column,
-                true_column="Experimental",
+            true_column = "Experimental"
+            df[true_column] = pd.to_numeric(df[true_column], errors="coerce")
+            result_df, metrics_per_model, sigma_model = predict_conformal(
+                df, 
+                pred_column=main_column,
+                true_column=true_column,
                 model_path=_ncmodel_path,
                 tag=data,
                 smiles_column="Smiles",
-                chunk_size=50000
+                chunk_size=50000,  
+                split="External", save_path=None
             )
+            logger.info(sigma_model)
         elapsed_time = time.time() - start_time
         logger.debug(f"{data}\tpredict_conformal end (elapsed: {elapsed_time:.2f}s)")
         model_metrics = {}
