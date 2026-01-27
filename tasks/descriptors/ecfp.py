@@ -5,6 +5,7 @@ import sqlite3
 import numpy as np
 import threading
 import logging 
+import re
 
 
 _conn_lock = threading.Lock()
@@ -37,10 +38,19 @@ def get_conn():
     return _cached_conn
 
 
+_rx_double_bracket = re.compile(r'\[\[([^\]]+)\]\]')
+
+
+def epa_to_rdkit_smiles(smi: str) -> str:
+    if smi is None:
+        return None
+    return _rx_double_bracket.sub(r'[\1]', smi)
+
+
 def smiles_to_ecfp_cached(smiles: str, radius: int = 4, n_bits: int = 2048, conn = None) -> np.ndarray:
     if conn is None:
         conn = get_conn()
-    mol = Chem.MolFromSmiles(smiles)
+    mol = Chem.MolFromSmiles(epa_to_rdkit_smiles(smiles))
     if mol is None:
         return np.zeros(n_bits, dtype=int)
 
