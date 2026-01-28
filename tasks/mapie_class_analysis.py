@@ -100,163 +100,116 @@ If the NCM had been more confident (higher P(distance=0)), the set would be smal
 confident (flatter distribution), the set would include class 0 as well.
 """
 
-def plot_ncm_coverage_comparison(df, output_path=None, split="Calibration"):
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+def plot_ncm_coverage_comparison(df, output_path=None, split_col='Split', alpha=0.1):
     """
-    Create comprehensive visualization comparing NCM model performance.
-    
-    Parameters
-    ----------
-    df : DataFrame
-        Must have columns: ['Dataset Name', 'ncm', 'Empirical Coverage', 'Split']
-        where split is 'Training' or 'Calibration'
-    output_path : str, optional
-        Path to save figure (e.g., 'ncm_comparison.png')
-    
-    Returns
-    -------
-    fig : matplotlib.figure.Figure
+    NCM coverage figure:
+    - Left: mean coverage per NCM, split-aware horizontal bar chart, colors reflect split
+    - Right: coverage distribution across all splits per NCM (side-by-side boxplots)
     """
-    
-    # Filter to calibration only (what matters for conformal)
-    df_cal = df[df['Split'] == split].copy()
-    
-    # Classify NCM types
-    def classify_ncm(ncm_name):
-        if ncm_name is None or ncm_name == "None":
-            return "None"
-        elif ncm_name.startswith('c') or ncm_name.startswith('o'):
-            return 'Classifier'
-        else:
-            return 'Regressor'
-    
-    if 'ncm' in df_cal:
-        df_cal['ncm'] = df_cal['ncm'].fillna('None')        
-        df_cal['ncm_type'] = df_cal['ncm'].apply(classify_ncm)
-    else:
-        df_cal['ncm_type'] = 'None'
-        df_cal['ncm'] = 'None'
-    
-    # Create figure with 2 subplots
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # ========================================
-    # Plot 1: Bar Chart - Mean Coverage by NCM
-    # ========================================
-    ax1 = axes[0]
-    
-    # Calculate mean coverage per NCM
-    mean_coverage = df_cal.groupby(['ncm', 'ncm_type'])['Empirical Coverage'].mean().reset_index()
-    mean_coverage = mean_coverage.sort_values('Empirical Coverage', ascending=False)
-    
-    # Highlight colors
-    highlight_colors = []
-    for idx, row in mean_coverage.iterrows():
-        if row['ncm_type'] is None:
-            highlight_colors.append('#95a5a6')  # Gray
-        elif row['ncm_type'] == 'Classifier':
-            highlight_colors.append('#27ae60')  # Dark green
-        else:
-            highlight_colors.append('#e74c3c')  # Red (regressor)
-    
-    bars = ax1.barh(mean_coverage['ncm'], mean_coverage['Empirical Coverage'], 
-                     color=highlight_colors, edgecolor='black', linewidth=1.5)
-    
-    # Add target line at 0.90
-    ax1.axvline(1-alpha, color='blue', linestyle='--', linewidth=2, 
-                label=f'Target ({100*(1-alpha)}%)', alpha=0.7)
-    
-    # Annotate values
-    for i, (idx, row) in enumerate(mean_coverage.iterrows()):
-        ax1.text(row['Empirical Coverage'] + 0.01, i, 
-                f"{row['Empirical Coverage']:.2f}", 
-                va='center', fontsize=10, fontweight='bold')
-    
-    ax1.set_xlabel('Mean Calibration Coverage', fontsize=12, fontweight='bold')
-    ax1.set_ylabel('Auxiliary Model', fontsize=12, fontweight='bold')
-    ax1.set_title('Coverage Performance by NCM Model', fontsize=14, fontweight='bold')
-    ax1.set_xlim(0.5, 0.95)
-    ax1.legend(loc='lower right', fontsize=10)
-    ax1.grid(axis='x', alpha=0.3)
-    
-    # Add separator line between classifiers and regressors
-    classifier_count = (mean_coverage['ncm_type'] == 'Classifier').sum()
-    if classifier_count < len(mean_coverage):
-        ax1.axhline(classifier_count - 0.5, color='black', 
-                   linestyle='-', linewidth=2, alpha=0.5)
-        ax1.text(0.76, classifier_count - 0.3, 'Classifiers', 
-                fontsize=10, va='bottom', fontweight='bold', 
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        ax1.text(0.76, classifier_count - 0.7, 'Regressors', 
-                fontsize=10, va='top', fontweight='bold',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-    
-    # ========================================
-    # Plot 2: Box Plot - Coverage Distribution
-    # ========================================
-    ax2 = axes[1]
-    
-    # Select subset of NCMs to compare
-    
-    df_subset = df_cal[df_cal['ncm'].isin(ncms_to_plot)].copy()
-    
-    # Order by mean coverage
-    ncm_order = df_subset.groupby('ncm')['Empirical Coverage'].mean().sort_values(ascending=False).index
-    
-    # Create box plot
-    positions = np.arange(len(ncm_order))
-    bp = ax2.boxplot([df_subset[df_subset['ncm'] == ncm]['Empirical Coverage'].values 
-                       for ncm in ncm_order],
-                      positions=positions,
-                      widths=0.6,
-                      patch_artist=True,
-                      medianprops=dict(color='black', linewidth=2),
-                      boxprops=dict(edgecolor='black', linewidth=1.5),
-                      whiskerprops=dict(color='black', linewidth=1.5),
-                      capprops=dict(color='black', linewidth=1.5),
-                      flierprops=dict(marker='o', markerfacecolor='red', markersize=6, alpha=0.5))
-    
-    # Color boxes
-    for i, (patch, ncm) in enumerate(zip(bp['boxes'], ncm_order)):
-        if ncm is None:
-            patch.set_facecolor('#95a5a6')  # Gray for other classifiers
-        elif ncm.startswith("c"):
-            patch.set_facecolor('#27ae60')  # Green for recommended            
-        else:
-            patch.set_facecolor('#e74c3c')  # Red for regressors
-    
-    # Target line
-    ax2.axhline(1-alpha, color='blue', linestyle='--', linewidth=2, 
-                label=f'Target ({100*(1-alpha)}%)', alpha=0.7)    
-    
-    ax2.set_ylabel(f'{split} Coverage', fontsize=12, fontweight='bold')
-    ax2.set_title('Coverage Distribution Across Datasets', fontsize=14, fontweight='bold')
-    ax2.set_xticks(positions)
-    ax2.set_xticklabels([ncm for ncm in ncm_order], rotation=45, ha='right')
-    ax2.set_ylim(0.4, 1.05)
-    ax2.legend(loc='lower left', fontsize=10)
-    ax2.grid(axis='y', alpha=0.3)
-    
-    # Add median value annotations
+    # Fill missing NCMs
+    df['ncm'] = df['ncm'].fillna('None')
+
+    # Determine unique splits and colors
+    splits = df[split_col].unique()
+    colors = plt.cm.Set2.colors[:len(splits)]  # Use Set2 colormap
+    split_color_map = dict(zip(splits, colors))
+
+    # Order NCMs by overall mean coverage (across all splits)
+    ncm_order = df.groupby('ncm')['Empirical Coverage'].mean().sort_values(ascending=False).index
+    ncm_count = len(ncm_order)
+    width = 0.8 / len(splits)  # width per split bar
+
+    fig, axes = plt.subplots(1, 2, figsize=(18, 6))
+
+    # ----------------------
+    # Left panel: split-aware horizontal bars
+    # ----------------------
+    df_grouped = df.groupby(['ncm', split_col])['Empirical Coverage'].mean().reset_index()
+
+    for i, sp in enumerate(splits):
+        sub = df_grouped[df_grouped[split_col] == sp].set_index('ncm').reindex(ncm_order)
+        axes[0].barh(
+            np.arange(ncm_count) + i*width,
+            sub['Empirical Coverage'],
+            height=width,
+            label=str(sp),
+            color=split_color_map[sp],
+            edgecolor='black'
+        )
+
+    axes[0].axvline(1-alpha, color='blue', linestyle='--', linewidth=2, label=f'Target {(1-alpha)*100:.0f}%')
+    axes[0].set_yticks(np.arange(ncm_count) + width*(len(splits)-1)/2)
+    axes[0].set_yticklabels(ncm_order, fontsize=10)
+    axes[0].set_xlabel('Mean Coverage', fontsize=12, fontweight='bold')
+    axes[0].set_title('Mean Coverage by NCM (Split-aware)', fontsize=14, fontweight='bold')
+    axes[0].set_xlim(0.75, 0.95)
+    axes[0].grid(axis='x', alpha=0.3)
+    axes[0].legend(title='Split')
+
+    # ----------------------
+    # Right panel: boxplots per split per NCM
+    # ----------------------
+    # For each NCM, get coverage per split
+    positions = []
+    box_data = []
+    box_colors = []
+    offset = 0
     for i, ncm in enumerate(ncm_order):
-        data = df_subset[df_subset['ncm'] == ncm]['Empirical Coverage']
-        median = data.median()
-        ax2.text(i, median + 0.02, f'{median:.2f}', 
-                ha='center', fontsize=9, fontweight='bold')
-    
+        for j, sp in enumerate(splits):
+            data = df[(df['ncm']==ncm) & (df[split_col]==sp)]['Empirical Coverage'].values
+            if len(data) > 0:
+                box_data.append(data)
+                positions.append(i + offset)
+                box_colors.append(split_color_map[sp])
+            offset += width
+        offset = 0  # reset offset for next NCM
+
+    bp = axes[1].boxplot(
+        box_data,
+        positions=positions,
+        widths=width*0.9,
+        patch_artist=True,
+        medianprops=dict(color='black', linewidth=2),
+        boxprops=dict(edgecolor='black', linewidth=1.5),
+        whiskerprops=dict(color='black', linewidth=1.5),
+        capprops=dict(color='black', linewidth=1.5),
+        flierprops=dict(marker='o', markerfacecolor='red', markersize=5, alpha=0.5)
+    )
+
+    # Color boxes by split
+    for patch, color in zip(bp['boxes'], box_colors):
+        patch.set_facecolor(color)
+
+    axes[1].axhline(1-alpha, color='blue', linestyle='--', linewidth=2)
+    # Set x-ticks at center of NCM clusters
+    cluster_centers = np.arange(ncm_count)
+    axes[1].set_xticks(cluster_centers)
+    axes[1].set_xticklabels(ncm_order, rotation=45, ha='right')
+    axes[1].set_ylabel('Coverage', fontsize=12, fontweight='bold')
+    axes[1].set_title('Coverage Distribution Across Splits', fontsize=14, fontweight='bold')
+    axes[1].set_ylim(0.4, 1.05)
+    axes[1].grid(axis='y', alpha=0.3)
+
+    # Add legend for splits
+    for i, sp in enumerate(splits):
+        axes[1].bar(0,0,color=split_color_map[sp], label=str(sp))
+    axes[1].legend(title='Split')
+
     plt.tight_layout()
-    
-    # Save if path provided
     if output_path:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"Figure saved to {output_path}")
-    
+
     return fig
 
 
 def plot_ncm_heatmap(df, output_path=None):
     """
     Create correlation heatmap showing similarity between NCM models.
-    Pure matplotlib implementation without seaborn.
     
     Parameters
     ----------
@@ -500,9 +453,8 @@ for tag in upstream:
 print(df["ncm"].unique())
 # Create plots
 #Test
-fig1 = plot_ncm_coverage_comparison(df, output_path=os.path.join(product["data"],'ncm_comparison_calibration.png'), split="Test")
-#Training
-fig1_1 = plot_ncm_coverage_comparison(df, output_path=os.path.join(product["data"],'ncm_comparison_training.png'), split="Training")
+fig1 = plot_ncm_coverage_comparison(df, output_path=os.path.join(product["data"],'ncm_comparison_calibration.png'), split_col="Split")
+
 fig2 = plot_ncm_heatmap(df, output_path=os.path.join(product["data"],'ncm_correlation_heatmap.png'))
 fig3 = plot_classifier_vs_regressor_comparison(df, output_path=os.path.join(product["data"],'classifier_vs_regressor.png'))
 print_ncm_summary_stats(df)
