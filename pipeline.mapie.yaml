@@ -152,17 +152,14 @@ tasks:
                           
 
   - source: tasks/mapie_class_analysis.py
-    name: "mapieanalysis_[[summary]]"
+    name: "mapieanalysis_class"
     upstream: ["classification_summary_mapie", "classproba_summary_mapie"]
     product: 
-      nb: "products/mapie/vega/[[summary]]/mapie_class_analysis.ipynb"
-      data: "products/mapie/vega/[[summary]]"
+      nb: "products/mapie/vega/classification/mapie_class_analysis.ipynb"
+      data: "products/mapie/vega/classification"
     params:
       alpha: 0.1
       ncms_to_plot: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp", None]
-    grid:
-      summary: ["classification"]
-
 
 
   - source: tasks/mapie_regression_analysis.py

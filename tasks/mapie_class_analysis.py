@@ -8,6 +8,8 @@ import os.path
 product = None
 upstream = None
 alpha = 0.1
+summary = None
+ncms_to_plot = ['crfecfp', 'cmlpecfp', 'cknnecfp', 'ladecfp', 'rfecfp', 'gbecfp']
 # -
 
 
@@ -98,7 +100,7 @@ If the NCM had been more confident (higher P(distance=0)), the set would be smal
 confident (flatter distribution), the set would include class 0 as well.
 """
 
-def plot_ncm_coverage_comparison(df, output_path=None):
+def plot_ncm_coverage_comparison(df, output_path=None, split="Calibration"):
     """
     Create comprehensive visualization comparing NCM model performance.
     
@@ -116,16 +118,23 @@ def plot_ncm_coverage_comparison(df, output_path=None):
     """
     
     # Filter to calibration only (what matters for conformal)
-    df_cal = df[df['Split'] == 'Calibration'].copy()
+    df_cal = df[df['Split'] == split].copy()
     
     # Classify NCM types
     def classify_ncm(ncm_name):
-        if ncm_name.startswith('c') or ncm_name.startswith('o'):
+        if ncm_name is None or ncm_name == "None":
+            return "None"
+        elif ncm_name.startswith('c') or ncm_name.startswith('o'):
             return 'Classifier'
         else:
             return 'Regressor'
     
-    df_cal['ncm_type'] = df_cal['ncm'].apply(classify_ncm)
+    if 'ncm' in df_cal:
+        df_cal['ncm'] = df_cal['ncm'].fillna('None')        
+        df_cal['ncm_type'] = df_cal['ncm'].apply(classify_ncm)
+    else:
+        df_cal['ncm_type'] = 'None'
+        df_cal['ncm'] = 'None'
     
     # Create figure with 2 subplots
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -142,10 +151,10 @@ def plot_ncm_coverage_comparison(df, output_path=None):
     # Highlight colors
     highlight_colors = []
     for idx, row in mean_coverage.iterrows():
-        if row['ncm'] == 'crfecfp':
-            highlight_colors.append('#27ae60')  # Dark green (recommended)
-        elif row['ncm_type'] == 'Classifier':
+        if row['ncm_type'] is None:
             highlight_colors.append('#95a5a6')  # Gray
+        elif row['ncm_type'] == 'Classifier':
+            highlight_colors.append('#27ae60')  # Dark green
         else:
             highlight_colors.append('#e74c3c')  # Red (regressor)
     
@@ -163,9 +172,9 @@ def plot_ncm_coverage_comparison(df, output_path=None):
                 va='center', fontsize=10, fontweight='bold')
     
     ax1.set_xlabel('Mean Calibration Coverage', fontsize=12, fontweight='bold')
-    ax1.set_ylabel('NCM Model', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Auxiliary Model', fontsize=12, fontweight='bold')
     ax1.set_title('Coverage Performance by NCM Model', fontsize=14, fontweight='bold')
-    ax1.set_xlim(0.75, 0.95)
+    ax1.set_xlim(0.5, 0.95)
     ax1.legend(loc='lower right', fontsize=10)
     ax1.grid(axis='x', alpha=0.3)
     
@@ -187,7 +196,6 @@ def plot_ncm_coverage_comparison(df, output_path=None):
     ax2 = axes[1]
     
     # Select subset of NCMs to compare
-    ncms_to_plot = ['crfecfp', 'cmlpecfp', 'cknnecfp', 'ladecfp', 'rfecfp', 'gbecfp']
     
     df_subset = df_cal[df_cal['ncm'].isin(ncms_to_plot)].copy()
     
@@ -209,10 +217,10 @@ def plot_ncm_coverage_comparison(df, output_path=None):
     
     # Color boxes
     for i, (patch, ncm) in enumerate(zip(bp['boxes'], ncm_order)):
-        if ncm == 'crfecfp':
-            patch.set_facecolor('#27ae60')  # Green for recommended
-        elif ncm in ['cmlpecfp', 'cknnecfp', 'ladecfp']:
+        if ncm is None:
             patch.set_facecolor('#95a5a6')  # Gray for other classifiers
+        elif ncm.startswith("c"):
+            patch.set_facecolor('#27ae60')  # Green for recommended            
         else:
             patch.set_facecolor('#e74c3c')  # Red for regressors
     
@@ -220,7 +228,7 @@ def plot_ncm_coverage_comparison(df, output_path=None):
     ax2.axhline(1-alpha, color='blue', linestyle='--', linewidth=2, 
                 label=f'Target ({100*(1-alpha)}%)', alpha=0.7)    
     
-    ax2.set_ylabel('Calibration Coverage', fontsize=12, fontweight='bold')
+    ax2.set_ylabel(f'{split} Coverage', fontsize=12, fontweight='bold')
     ax2.set_title('Coverage Distribution Across Datasets', fontsize=14, fontweight='bold')
     ax2.set_xticks(positions)
     ax2.set_xticklabels([ncm for ncm in ncm_order], rotation=45, ha='right')
@@ -306,7 +314,7 @@ def plot_ncm_heatmap(df, output_path=None):
     ax.set_yticks(np.arange(len(ncm_names)) - 0.5, minor=True)
     ax.grid(which='minor', color='black', linestyle='-', linewidth=0.5)
     
-    ax.set_title('NCM Model Similarity\n(Correlation of Calibration Coverage Across Datasets)', 
+    ax.set_title('Auxliary Model Similarity\n(Correlation of Calibration Coverage Across Datasets)', 
                 fontsize=14, fontweight='bold', pad=20)
     
     plt.tight_layout()
@@ -337,8 +345,9 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
     df_cal = df[df['Split'] == 'Calibration'].copy()
     
     # Classify NCM types
+    
     df_cal['ncm_type'] = df_cal['ncm'].apply(
-        lambda x: 'Classifier' if x.startswith(('c', 'o')) else 'Regressor'
+        lambda x: "None" if x is None else 'Classifier' if x.startswith(('c', 'o')) else 'Regressor'
     )
     
     # Create figure
@@ -347,10 +356,12 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
     # Get data for each type
     classifiers = df_cal[df_cal['ncm_type'] == 'Classifier']['Empirical Coverage']
     regressors = df_cal[df_cal['ncm_type'] == 'Regressor']['Empirical Coverage']
+    other = df_cal[df_cal['ncm_type'] == 'None']['Empirical Coverage']
+    
     
     # Create violin plot-style using multiple box plots
-    data_to_plot = [classifiers, regressors]
-    positions = [1, 2]
+    data_to_plot = [classifiers, regressors, other]
+    positions = [1, 2, 3]
     
     bp = ax.boxplot(data_to_plot, 
                     positions=positions,
@@ -365,18 +376,19 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
     # Color boxes
     bp['boxes'][0].set_facecolor('#27ae60')  # Green for classifiers
     bp['boxes'][1].set_facecolor('#e74c3c')  # Red for regressors
+    bp['boxes'][2].set_facecolor('#95a5a6')  # Red for regressors
     
     # Add target line
     ax.axhline(1-alpha, color='blue', linestyle='--', linewidth=2, 
                 label=f'Target ({100*(1-alpha)}%)', alpha=0.7)    
     
     # Add mean markers
-    means = [classifiers.mean(), regressors.mean()]
+    means = [classifiers.mean(), regressors.mean(), other.mean()]
     ax.plot(positions, means, 'D', color='gold', markersize=12, 
            markeredgecolor='black', markeredgewidth=2, label='Mean', zorder=3)
     
     # Add statistics text
-    for i, (pos, data, label) in enumerate(zip(positions, data_to_plot, ['Classifiers', 'Regressors'])):
+    for i, (pos, data, label) in enumerate(zip(positions, data_to_plot, ['Classifiers', 'Regressors','None'])):
         mean_val = data.mean()
         median_val = data.median()
         std_val = data.std()
@@ -389,7 +401,7 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
     
     # Formatting
     ax.set_xticks(positions)
-    ax.set_xticklabels(['Classifier-based\nNCMs', 'Regressor-based\nNCMs'], 
+    ax.set_xticklabels(['Classifier-based\n Aux models', 'Regressor-based\n Aux models', "No Aux models"], 
                        fontsize=12, fontweight='bold')
     ax.set_ylabel('Calibration Coverage', fontsize=12, fontweight='bold')
     ax.set_title('Classifier vs Regressor NCM Performance', 
@@ -402,9 +414,9 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
     diff = means[0] - means[1]
     ax.annotate('', xy=(1, means[0]), xytext=(2, means[1]),
                arrowprops=dict(arrowstyle='<->', lw=2, color='black'))
-    ax.text(1.5, (means[0] + means[1]) / 2, f'+{diff:.3f}\n({diff*100:.1f}%)', 
-           ha='center', va='center', fontsize=11, fontweight='bold',
-           bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8, edgecolor='black'))
+    #ax.text(1.5, (means[0] + means[1] + means[3]) / 2, f'+{diff:.3f}\n({diff*100:.1f}%)', 
+    #       ha='center', va='center', fontsize=11, fontweight='bold',
+    #       bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8, edgecolor='black'))
     
     plt.tight_layout()
     
@@ -427,7 +439,7 @@ def print_ncm_summary_stats(df):
     df_cal = df[df['Split'] == 'Calibration'].copy()
     
     print("=" * 70)
-    print("NCM MODEL COMPARISON SUMMARY")
+    print("Auxiliary MODEL COMPARISON SUMMARY")
     print("=" * 70)
     print()
     
@@ -441,7 +453,7 @@ def print_ncm_summary_stats(df):
     
     # Classifier vs Regressor
     df_cal['ncm_type'] = df_cal['ncm'].apply(
-        lambda x: 'Classifier' if x.startswith(('c', 'o')) else 'Regressor'
+        lambda x: None if x is None else 'Classifier' if x.startswith(('c', 'o')) else 'Regressor'
     )
     
     type_stats = df_cal.groupby('ncm_type')['Empirical Coverage'].agg(['mean', 'std', 'count'])
@@ -474,11 +486,23 @@ def print_ncm_summary_stats(df):
     print("=" * 70)
 
 
-path_class = upstream["classification_summary_mapie"]
-df = pd.read_excel(os.path.join(path_class["data"]))
+df = None
+for tag in upstream:
+    path_class = upstream[tag]["data"]
+    _df = pd.read_excel(path_class)
+    if "ncm" not in _df.columns:
+        _df["ncm"] = "None"
+    if df is None:
+        df = _df
+    else:
+        df = pd.concat([df, _df])
 
+print(df["ncm"].unique())
 # Create plots
-fig1 = plot_ncm_coverage_comparison(df, output_path=os.path.join(product["data"],'ncm_comparison.png'))
+#Test
+fig1 = plot_ncm_coverage_comparison(df, output_path=os.path.join(product["data"],'ncm_comparison_calibration.png'), split="Test")
+#Training
+fig1_1 = plot_ncm_coverage_comparison(df, output_path=os.path.join(product["data"],'ncm_comparison_training.png'), split="Training")
 fig2 = plot_ncm_heatmap(df, output_path=os.path.join(product["data"],'ncm_correlation_heatmap.png'))
 fig3 = plot_classifier_vs_regressor_comparison(df, output_path=os.path.join(product["data"],'classifier_vs_regressor.png'))
 print_ncm_summary_stats(df)
