@@ -216,6 +216,21 @@ tasks:
       ncm_code: ["crfecfp"]        
 
 
+  - source: tasks/mapie_apply_plot.py
+    name: "outcome_plot_class"
+    upstream: ["class_apply_*"]
+    #upstream: []
+    product: 
+      nb: "{{VEGA_CP_OUTPUT}}//outcome_plot_class.ipynb"
+      results: "{{VEGA_CP_OUTPUT}}//uncertainty_domain_figure.png"
+    params:
+      classification: True
+      ncm_code: "crfecfp"
+      data: "{{vega_class}}"
+      prefix: "class_apply_{{input_key}}_"
+
+
+
   - source: tasks/solr/chemicals.py
     name: "chemicals_[[input_key]]"
     upstream: []
@@ -227,3 +242,5 @@ tasks:
       cache_path: "products/ecfp4_cache.db"
     grid:
       input_key: "{{input_key}}"
+
+
