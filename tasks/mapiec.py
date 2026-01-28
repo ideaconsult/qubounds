@@ -4,11 +4,15 @@ import pandas as pd
 from tasks.descriptors.ecfp import init_cache
 from tasks.mapie_class_lac import (
     train_conformal_classifier, predict_conformal_classifier_chunked)
+from tasks.mapie_class_proba import (
+    predict_conformal_classifier_proba
+)
 from tasks.vega.utils_vega import (
     get_class_values, clean_classdataset, map_class_to_probability_label)
 from tasks.assessment.utils import init_logging
 from pathlib import Path
 from tasks.mapie_diagnostic import plot_conformal_diagnostics
+import pickle
 
 
 # + tags=["parameters"]
@@ -91,13 +95,28 @@ else:
                     ["Prediction Intervals", "Training PI", "Calibration PI"]))
     for (split, df, sheet_name) in _all:
         logger.info(f"{split} {df.columns}")
-        result_df, metrics_per_model = predict_conformal_classifier_chunked(
-            df, 
-            pred_column=label_pred_test,
-            true_column=experimental_tag,
-            model_path=product["ncmodel"],
-            tag=data
-        )
+        if method_score.endswith("_proba"):
+            #if not Path(model_path).exists():
+            #return None, None
+            with open(product["ncmodel"], "rb") as f:
+                saved_model = pickle.load(f)            
+            result_df, metrics_per_model = predict_conformal_classifier_proba(
+                df=df, 
+                true_column=experimental_tag,
+                prob_columns=predicted_tags,
+                saved_model=saved_model,
+                tag=data,
+                split=split
+            )           
+        else:            
+            result_df, metrics_per_model = predict_conformal_classifier_chunked(
+                df, 
+                pred_column=label_pred_test,
+                true_column=experimental_tag,
+                model_path=product["ncmodel"],
+                tag=data,
+                split=split
+            )
         if result_df is None:
             continue
         results[sheet_name] = result_df

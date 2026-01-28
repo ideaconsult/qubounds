@@ -80,7 +80,7 @@ tasks:
       prob_columns: "{{vega_class_plabel}}"
       method_score: "LAC_proba"      
     grid:
-      ncm: ["rfecfp", "gbecfp", "knnecfp"]  
+      ncm: ["None"]  
       #data: ["CARC_CAESAR"]
       #data: ["AROM_IRMFN"]
       data: "{{vega_pclass}}"
@@ -160,6 +160,7 @@ tasks:
       skip_existing: True
       classification: True
       vega_models: "resources/vega_models_withclasses.xlsx"      
+      vega_class_plabel: "{{vega_class_plabel}}"
     grid:
       #data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
       data: "{{vega_class}}"
