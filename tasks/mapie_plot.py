@@ -49,9 +49,9 @@ def figure_spearman(df, save_path=None):
     ax1.axvline(x=0, color='black', linestyle='-', linewidth=1.5)
     ax1.set_yticks(y_pos)
     ax1.set_yticklabels(df_sorted['data'], fontsize=9)
-    ax1.set_xlabel('Spearman ρ', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('Spearman ρ', fontsize=12 )
     ax1.set_title('ADI vs Interval Width Correlation\n(Sorted by Strength)', 
-                fontsize=14, fontweight='bold', pad=20)
+                fontsize=12, pad=10)
     ax1.grid(axis='x', alpha=0.3, linestyle='--')
     ax1.set_xlim(-0.8, 0.2)
 
@@ -72,7 +72,7 @@ def figure_spearman(df, save_path=None):
     ax2.set_xlabel('Spearman ρ', fontsize=12, fontweight='bold')
     ax2.set_ylabel('Dataset Size (n)', fontsize=12, fontweight='bold')
     ax2.set_title('Correlation Strength vs Dataset Size', 
-                fontsize=14, fontweight='bold', pad=20)
+                fontsize=12,  pad=10)
     ax2.grid(True, alpha=0.3, linestyle='--')
     ax2.set_yscale('log')  # Log scale for better visibility
 
@@ -114,13 +114,13 @@ def figure_spearman(df, save_path=None):
     print("(Does larger n lead to stronger/weaker correlations?)")
     
     
-def coverage_by_adi_bins(df):
+def coverage_by_adi_bins(df, save_path=None):
     # Bin ADI into groups
     df['ADI_bin'] = pd.cut(df['ADI'], bins=[0, 0.5, 0.75, 0.85, 1.0], 
                         labels=['Very Low\n(0-0.5)', 'Low\n(0.5-0.75)', 
                                 'Moderate\n(0.75-0.85)', 'High\n(0.85-1.0)'])
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
     # === PLOT 1: Coverage rate by ADI bin ===
     coverage_by_adi = df.groupby('ADI_bin')['covered'].agg(['mean', 'count'])
@@ -147,7 +147,8 @@ def coverage_by_adi_bins(df):
     plt.setp(ax2.xaxis.get_majorticklabels(), rotation=0)
 
     plt.tight_layout()
-    plt.savefig('coverage_analysis.png', dpi=300, bbox_inches='tight')
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
 
     # Print statistics
@@ -212,7 +213,7 @@ for key_star in upstream:
             tmp_test["abs_residual"] = abs(
                 tmp_test[f"{_data}_true"] - tmp_test[f"{_data}_pred"]
             )
-
+            coverage_by_adi_bins(pd.concat([tmp_train, tmp_test]), None)
             combined_rows.append(tmp_train)
             combined_rows.append(tmp_test)
 
@@ -290,4 +291,4 @@ if len(combined_rows)>0:
     )
 
     figure_spearman(corr_df, product["plot"])    
-    coverage_by_adi_bins(combined_df)
+    coverage_by_adi_bins(combined_df, product["plot"].replace("spearman", "coverage_analysis"))

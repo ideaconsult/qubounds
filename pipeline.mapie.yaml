@@ -42,12 +42,48 @@ tasks:
       #ncm: ["rfecfp","knnecfp", "gbecfp"]
       ncm: ["rfecfp", "knn2ecfp", "rlgbmecfp"] 
 
+  - source: tasks/mapie_plot_class.py
+    name: "mapieplot_classlac_[[ncm]]"
+    upstream: ["mapiec_*"]    
+    product: 
+      nb: "products/mapie/vega/classification/[[ncm]]/mapie_plot.ipynb"
+      data: "products/mapie/vega/classification/[[ncm]]/spearman.xlsx"
+      plot: "products/mapie/vega/classification/[[ncm]]/spearman.png"
+    params:
+      input_folder: "products/vega/class_lac"
+      vega_models: "resources/vega_models_withclasses.xlsx"        
+      mode: "classification"
+      data: "{{vega_class}}"
+      data_: ["BCF_MEYLAN"]
+    grid:
+      #ncm: ["rfecfp","knnecfp", "gbecfp"]
+      ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
+
+
+  - source: tasks/mapie_plot_class.py
+    name: "mapieplot_classproba_[[ncm]]"
+    upstream: ["mapiecproba_*"]    
+    product: 
+      nb: "products/mapie/vega/class_proba/[[ncm]]/mapie_plot.ipynb"
+      data: "products/mapie/vega/class_proba/[[ncm]]/classification_metrics.xlsx"
+      plot: "products/mapie/vega/class_proba/[[ncm]]/coverage_analysis.png"
+    params:
+      input_folder: "products/vega/class_proba"
+      vega_models: "resources/vega_models_withclasses.xlsx"        
+      mode: "classification"
+      data: "{{vega_class}}"
+      data_: ["BCF_MEYLAN"]
+    grid:
+      #ncm: ["rfecfp","knnecfp", "gbecfp"]
+      ncm: [None]
+
+
   - source: tasks/mapiec.py
     name: "mapiec_[[data]]_[[ncm]]"
     product: 
-      nb: "products/mapie/vega/{{class_folder}}/[[ncm]]/[[data]]/mapie.ipynb"
-      data: "products/mapie/vega/{{class_folder}}/[[ncm]]/[[data]]/mapie.xlsx"
-      ncmodel: "products/mapie/vega/{{class_folder}}/[[ncm]]/[[data]]/mapie.pkl"
+      nb: "products/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.ipynb"
+      data: "products/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.xlsx"
+      ncmodel: "products/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.pkl"
     params:
       input_folder: "products/vega/classification"
       alpha: 0.1
@@ -58,8 +94,9 @@ tasks:
       vega_models: "resources/vega_models_withclasses.xlsx"
       method_score: "LAC"      
     grid:
-      ncm: ["crfecfp", "cmlpecfp", "cgbecfp", "chgbecfp", "cmordecfp", "ladecfp", "ogbecfp", "omlpecfp", "knnjecfp","cknnecfp","rfecfp","gbecfp"]  
-      #data: ["ALGAE_COMBASECLASS"]
+      ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
+      # "crfecfp", "cknn2jecfp","rfecfp",, "knn2jecfp"]  
+      #data: ["ALGAE_COMBASECLASS", "AROM_IRMFN", "AROM_TOX21", "BEE_KNN", "CARC_ANTARES"]
       data: "{{vega_class}}"
 
 
@@ -101,17 +138,31 @@ tasks:
     params:
       vega_models: "resources/vega_models_withclasses.xlsx"
     product: 
-      nb: "products/mapie/vega/{{class_folder}}/summary.ipynb"
-      data: "products/mapie/vega/{{class_folder}}/summary.xlsx"              
+      nb: "products/mapie/vega/class_lac/summary.ipynb"
+      data: "products/mapie/vega/class_lac/summary.xlsx"
+
+  - source: tasks/conformal_classification_summary.py
+    name: "classproba_summary_mapie"
+    upstream: ["mapiecproba_*"]
+    params:
+      vega_models: "resources/vega_models_withclasses.xlsx"
+    product: 
+      nb: "products/mapie/vega/class_proba/summary.ipynb"
+      data: "products/mapie/vega/class_proba/summary.xlsx"  
+                          
 
   - source: tasks/mapie_class_analysis.py
-    name: "mapieanalysis_class"
-    upstream: ["classification_summary_mapie"]
+    name: "mapieanalysis_[[summary]]"
+    upstream: ["classification_summary_mapie", "classproba_summary_mapie"]
     product: 
-      nb: "products/mapie/vega/{{class_folder}}/mapie_class_analysis.ipynb"
-      data: "products/mapie/vega/{{class_folder}}"
+      nb: "products/mapie/vega/[[summary]]/mapie_class_analysis.ipynb"
+      data: "products/mapie/vega/[[summary]]"
     params:
-      alpha: 0.1    
+      alpha: 0.1
+      ncms_to_plot: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp", None]
+    grid:
+      summary: ["classification"]
+
 
 
   - source: tasks/mapie_regression_analysis.py

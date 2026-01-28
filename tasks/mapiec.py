@@ -108,8 +108,9 @@ else:
                 tag=data,
                 split=split
             )           
+            sigma_model = {}
         else:            
-            result_df, metrics_per_model = predict_conformal_classifier_chunked(
+            result_df, metrics_per_model, sigma_model = predict_conformal_classifier_chunked(
                 df, 
                 pred_column=label_pred_test,
                 true_column=experimental_tag,
@@ -117,6 +118,10 @@ else:
                 tag=data,
                 split=split
             )
+            if split == "Training":
+                metrics_per_model["sigma_r2"] = sigma_model.get("sigma_r2", None)
+            else:
+                metrics_per_model["sigma_r2"] = sigma_model.get("sigma_r2_cal", None)                
         if result_df is None:
             continue
         results[sheet_name] = result_df

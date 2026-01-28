@@ -280,17 +280,7 @@ def make_sigma_model(ncm):
         )            
     elif ncm == "clgbmecfp":    
         return LGBMClassifier(
-            objective="huber",
-            alpha=0.9,
-            num_leaves=64,
-            max_depth=-1,
-            learning_rate=0.05,
-            n_estimators=100,
-            subsample=0.8,
-            colsample_bytree=0.7,
-            min_split_gain=0.01,
-            lambda_l2=5,
-            early_stopping_rounds=50
+            objective="huber"
         )        
     elif ncm == "rnrecfp":
         return RadiusNeighborsRegressor(
@@ -346,6 +336,12 @@ def make_sigma_model(ncm):
             weights="distance",     # similarity-based uncertainty
             metric="jaccard"
         )     
+    elif ncm == "cknn2jecfp":
+        return KNeighborsClassifier(
+            n_neighbors=2,          # intentional AD behavior
+            weights="distance",     # similarity-based uncertainty
+            metric="jaccard"
+        )        
     elif ncm == "crfecfp":
         return RandomForestClassifier(
             n_estimators=100, class_weight='balanced'
