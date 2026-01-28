@@ -16,6 +16,7 @@ classification = False
 vega_models = None
 upstream = None
 prefix = None
+max_files = None
 # -
 
 
@@ -294,15 +295,15 @@ def process_files(upstream, prefix, ncm_code, max_files=300):
                 
                 files_processed += 1
                 if files_processed % 10 == 0:
-                    print(f"  Processed {files_processed} files...")
+                    logger.info(f"  Processed {files_processed} files...")
                 
             except Exception as e:
                 files_failed += 1
-                print(f"  ✗ Failed {model_name}: {str(e)}")
+                logger.info(f"  ✗ Failed {model_name}: {str(e)}")
                 continue
     
-    print(f"\nProcessing complete: {files_processed} files processed, {files_failed} failed")
-    print(f"Total predictions: {aggregator.total_chemicals:,}")
+    logger.info(f"\nProcessing complete: {files_processed} files processed, {files_failed} failed")
+    logger.info(f"Total predictions: {aggregator.total_chemicals:,}")
     
     return aggregator
 
@@ -342,7 +343,7 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
     
     df_global = pd.DataFrame(global_stats_data)
     df_global.to_csv(f"{base_path}_global_stats.csv", index=False, float_format='%.4f')
-    print(f"Global statistics saved to: {base_path}_global_stats.csv")
+    logger.info(f"Global statistics saved to: {base_path}_global_stats.csv")
     
     # ===== 2. PER-MODEL STATISTICS CSV =====
     model_stats_data = []
@@ -375,7 +376,7 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
     df_models = pd.DataFrame(model_stats_data)
     df_models = df_models.sort_values('Overall_Mean')  # Sort by certainty (low = more certain)
     df_models.to_csv(f"{base_path}_model_stats.csv", index=False, float_format='%.4f')
-    print(f"Model statistics saved to: {base_path}_model_stats.csv")
+    logger.info(f"Model statistics saved to: {base_path}_model_stats.csv")
     
     # ===== 3. DETAILED MODEL-ADI MATRIX CSV =====
     model_adi_data = []
@@ -394,7 +395,7 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
     
     df_model_adi = pd.DataFrame(model_adi_data)
     df_model_adi.to_csv(f"{base_path}_model_adi_matrix.csv", index=False, float_format='%.4f')
-    print(f"Model-ADI matrix saved to: {base_path}_model_adi_matrix.csv")
+    logger.info(f"Model-ADI matrix saved to: {base_path}_model_adi_matrix.csv")
     
     # ===== 4. SUMMARY TEXT REPORT =====
     with open(f"{base_path}_summary.txt", 'w') as f:
@@ -460,7 +461,7 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
         f.write("END OF REPORT\n")
         f.write("="*80 + "\n")
     
-    print(f"Summary report saved to: {base_path}_summary.txt")
+    logger.info(f"Summary report saved to: {base_path}_summary.txt")
 
 
 # -----------------------------
@@ -643,7 +644,7 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
                  fontsize=14, fontweight='bold', y=0.995)
     
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Global analysis saved to: {save_path}")
+    logger.info(f"Global analysis saved to: {save_path}")
     plt.close()
 
 
@@ -761,7 +762,7 @@ def plot_model_comparison(aggregator: ConformalAggregator, save_path: str, top_n
                  fontsize=14, fontweight='bold', y=0.995)
     
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Model comparison saved to: {save_path}")
+    logger.info(f"Model comparison saved to: {save_path}")
     plt.close()
 
 
@@ -777,7 +778,7 @@ if __name__ == "__main__" or True:  # Works in both script and notebook mode
     print()
     
     # Process all files
-    aggregator = process_files(upstream, prefix, ncm_code, max_files=2)
+    aggregator = process_files(upstream, prefix, ncm_code, max_files=max_files)
     
     # Generate plots
     base_path = product["results"].rsplit('.', 1)[0]
@@ -791,10 +792,10 @@ if __name__ == "__main__" or True:  # Works in both script and notebook mode
     print("Analysis complete!")
     print("="*60)
     print("\nOutput files:")
-    print(f"  - {base_path}_summary.txt")
-    print(f"  - {base_path}_global_stats.csv")
-    print(f"  - {base_path}_model_stats.csv")
-    print(f"  - {base_path}_model_adi_matrix.csv")
-    print(f"  - {base_path}_global.png")
-    print(f"  - {base_path}_models.png")
+    logger.info(f"  - {base_path}_summary.txt")
+    logger.info(f"  - {base_path}_global_stats.csv")
+    logger.info(f"  - {base_path}_model_stats.csv")
+    logger.info(f"  - {base_path}_model_adi_matrix.csv")
+    logger.info(f"  - {base_path}_global.png")
+    logger.info(f"  - {base_path}_models.png")
     print("="*60)
