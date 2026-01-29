@@ -221,15 +221,30 @@ tasks:
     upstream: ["class_apply_*"]
     #upstream: []
     product: 
-      nb: "{{VEGA_CP_OUTPUT}}//outcome_plot_class.ipynb"
-      results: "{{VEGA_CP_OUTPUT}}//class_lac/uncertainty_domain_figure_global.png"
+      nb: "{{VEGA_CP_OUTPUT}}//results/class_lac/outcome_plot_class.ipynb"
+      results: "{{VEGA_CP_OUTPUT}}/results/class_lac/uncertainty_domain_figure_global.png"
     params:
       classification: True
       ncm_code: "crfecfp"
       data: "{{vega_class}}"
       prefix: "class_apply_{{input_key}}_"
       max_files: 300
+      
 
+
+  - source: tasks/mapie_apply_plot.py
+    name: "outcome_plot_regr"
+    upstream: ["regr_apply_*", "regression_summary_mapie"]
+    #upstream: []
+    product: 
+      nb: "{{VEGA_CP_OUTPUT}}//results/outcome_plot_regr.ipynb"
+      results: "{{VEGA_CP_OUTPUT}}//results/regression/uncertainty_domain_figure_global.png"
+    params:
+      classification: False
+      ncm_code: "rlgbmecfp"
+      data: "{{vega_regr}}"
+      prefix: "regr_apply_{{input_key}}_"
+      max_files: 300    
 
 
   - source: tasks/solr/chemicals.py
