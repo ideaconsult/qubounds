@@ -6,13 +6,15 @@ from tasks.mapie_diagnostic import (
     plot_prediction_intervals,
     plot_interval_width_histogram,
     plot_prediction_intervals_index,
-    mark_outlier
+    mark_outlier,
+    plot_coverage_efficiency_analysis
 )
 import pickle
 from scipy import stats
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from IPython.display import display, Markdown, HTML
+from scipy.stats import spearmanr
 
 
 # + tags=["parameters"]
@@ -222,7 +224,7 @@ if len(combined_rows)>0:
     combined_df["outlier"] = mark_outlier(combined_df, col='Relative Interval Width', low=0.05, up=0.95)
     combined_df = combined_df.loc[~combined_df["outlier"]]
 
-    from scipy.stats import spearmanr
+    
     rho, p = spearmanr(
         combined_df["ADI"],
         combined_df["Relative Interval Width"]
@@ -292,3 +294,17 @@ if len(combined_rows)>0:
 
     figure_spearman(corr_df, product["plot"])    
     coverage_by_adi_bins(combined_df, product["plot"].replace("spearman", "coverage_analysis"))
+
+    # NEW: Generate Figure 2
+    dataset_stats = plot_coverage_efficiency_analysis(
+        combined_df, 
+        save_path=product["plot"].replace("spearman", "coverage_efficiency")
+    )
+    
+    # Export statistics
+    dataset_stats.to_excel(
+        product["data"].replace(".xlsx", "_performance.xlsx"),
+        index=False,
+        max_labels_panel_a=15,  # Fewer labels in Panel A
+        annotate_top_n=2        # Fewer annotations in Panel D        
+    )    
