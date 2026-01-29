@@ -4,9 +4,11 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+from scipy.stats import spearmanr
 import warnings
-from tasks.assessment.utils import init_logging
+import pickle
 from pathlib import Path
+from tasks.assessment.utils import init_logging
 
 
 # + tags=["parameters"]
@@ -19,7 +21,6 @@ prefix = None
 max_files = None
 # -
 
-
 # Suppress openpyxl warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 logger = init_logging(Path(product["nb"]).parent / "logs", "plots.log")
@@ -31,7 +32,7 @@ logger = init_logging(Path(product["nb"]).parent / "logs", "plots.log")
 ADI_BINS = [0, 0.5, 0.75, 0.85, 1.0]
 ADI_LABELS = ["Very Low", "Low", "Moderate", "High"]
 
-CHUNK_SIZE = 200000  # Process data in chunks after loading (memory management)
+CHUNK_SIZE = 50000  # Process data in chunks after loading (memory management)
 
 
 # -----------------------------
@@ -248,21 +249,39 @@ class ConformalAggregator:
             # Per-model updates
             self.model_adi[model_name].update(adi_bin, distance)
             self.model_all[model_name].update(distance)
-
-
-# -----------------------------
-# FILE PROCESSING
-# -----------------------------
-
-def process_files(upstream, prefix, ncm_code, max_files=300):
-    """Process all upstream files with streaming"""
     
+    def save(self, filepath: str):
+        """Save aggregator state to disk"""
+        with open(filepath, 'wb') as f:
+            pickle.dump(self, f)
+        print(f"Aggregator saved to: {filepath}")
+    
+    @staticmethod
+    def load(filepath: str) -> 'ConformalAggregator':
+        """Load aggregator state from disk"""
+        with open(filepath, 'rb') as f:
+            return pickle.load(f)
+
+
+# -----------------------------
+# FILE PROCESSING WITH CACHING
+# -----------------------------
+
+def process_files(upstream, prefix, ncm_code, max_files=300, cache_path=None):
+    """Process all upstream files with streaming and caching support"""
+    
+    # Check if cached aggregator exists
+    if cache_path and Path(cache_path).exists():
+        print(f"Loading cached aggregator from: {cache_path}")
+        aggregator = ConformalAggregator.load(cache_path)
+        print(f"Loaded: {aggregator.total_chemicals:,} predictions across {len(aggregator.model_names)} models")
+        return aggregator
+    
+    print("No cache found, processing files...")
     aggregator = ConformalAggregator()
     
     files_processed = 0
     files_failed = 0
-    
-    print("Processing files...")
     
     for tag in upstream:
         for key in upstream[tag]:
@@ -271,7 +290,7 @@ def process_files(upstream, prefix, ncm_code, max_files=300):
             # Extract model name
             model_name = key.replace(prefix, "").replace(f"_{ncm_code}", "")
             filepath = upstream[tag][key]["results"]
-            print(model_name)
+            
             try:
                 # Determine distance column name
                 dist_col = f"{model_name}_predicted_distance"
@@ -295,15 +314,19 @@ def process_files(upstream, prefix, ncm_code, max_files=300):
                 
                 files_processed += 1
                 if files_processed % 10 == 0:
-                    logger.info(f"  Processed {files_processed} files...")
+                    print(f"  Processed {files_processed} files...")
                 
             except Exception as e:
                 files_failed += 1
-                logger.info(f"  ✗ Failed {model_name}: {str(e)}")
+                print(f"  Failed {model_name}: {str(e)}")
                 continue
     
-    logger.info(f"\nProcessing complete: {files_processed} files processed, {files_failed} failed")
-    logger.info(f"Total predictions: {aggregator.total_chemicals:,}")
+    print(f"\nProcessing complete: {files_processed} files processed, {files_failed} failed")
+    print(f"Total predictions: {aggregator.total_chemicals:,}")
+    
+    # Save cache if path provided
+    if cache_path:
+        aggregator.save(cache_path)
     
     return aggregator
 
@@ -315,10 +338,17 @@ def process_files(upstream, prefix, ncm_code, max_files=300):
 def write_statistics(aggregator: ConformalAggregator, base_path: str):
     """Write comprehensive statistics to files"""
     
+    # Calculate correlation metrics
+    mean_dist = aggregator.global_adi.get_mean_distance()
+    adi_bin_centers = [0.25, 0.625, 0.8, 0.925]  # Midpoints of ADI bins
+    means_for_corr = [mean_dist[k] for k in ADI_LABELS]
+    
+    spearman_corr, spearman_p = spearmanr(means_for_corr, adi_bin_centers)
+    pearson_corr = np.corrcoef(means_for_corr, adi_bin_centers)[0, 1]
+    
     # ===== 1. GLOBAL STATISTICS CSV =====
     global_stats_data = []
     
-    mean_dist = aggregator.global_adi.get_mean_distance()
     std_dist = aggregator.global_adi.get_std_distance()
     quantiles = aggregator.global_adi.get_quantiles([0.05, 0.25, 0.5, 0.75, 0.95])
     
@@ -343,7 +373,7 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
     
     df_global = pd.DataFrame(global_stats_data)
     df_global.to_csv(f"{base_path}_global_stats.csv", index=False, float_format='%.4f')
-    logger.info(f"Global statistics saved to: {base_path}_global_stats.csv")
+    print(f"Global statistics saved to: {base_path}_global_stats.csv")
     
     # ===== 2. PER-MODEL STATISTICS CSV =====
     model_stats_data = []
@@ -376,7 +406,7 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
     df_models = pd.DataFrame(model_stats_data)
     df_models = df_models.sort_values('Overall_Mean')  # Sort by certainty (low = more certain)
     df_models.to_csv(f"{base_path}_model_stats.csv", index=False, float_format='%.4f')
-    logger.info(f"Model statistics saved to: {base_path}_model_stats.csv")
+    print(f"Model statistics saved to: {base_path}_model_stats.csv")
     
     # ===== 3. DETAILED MODEL-ADI MATRIX CSV =====
     model_adi_data = []
@@ -395,10 +425,10 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
     
     df_model_adi = pd.DataFrame(model_adi_data)
     df_model_adi.to_csv(f"{base_path}_model_adi_matrix.csv", index=False, float_format='%.4f')
-    logger.info(f"Model-ADI matrix saved to: {base_path}_model_adi_matrix.csv")
+    print(f"Model-ADI matrix saved to: {base_path}_model_adi_matrix.csv")
     
     # ===== 4. SUMMARY TEXT REPORT =====
-    with open(f"{base_path}_summary.txt", 'w') as f:
+    with open(f"{base_path}_summary.txt", 'w', encoding='utf-8') as f:
         f.write("="*80 + "\n")
         f.write("CONFORMAL PREDICTION ANALYSIS - SUMMARY REPORT\n")
         f.write("="*80 + "\n\n")
@@ -410,6 +440,22 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
         f.write(f"Number of Models: {len(aggregator.model_names)}\n")
         f.write(f"Overall Mean Distance: {aggregator.global_all.mean:.4f}\n")
         f.write(f"Overall Std Distance: {aggregator.global_all.std:.4f}\n\n")
+        
+        # Correlation metrics
+        f.write("ADI-DISTANCE CORRELATION METRICS\n")
+        f.write("-"*80 + "\n")
+        f.write(f"Spearman rho (rank correlation): {spearman_corr:.4f} (p-value: {spearman_p:.4e})\n")
+        f.write(f"Pearson r (linear correlation): {pearson_corr:.4f}\n")
+        f.write(f"\nInterpretation:\n")
+        if spearman_corr < -0.7:
+            f.write("  [STRONG] Strong negative correlation - low uncertainty strongly predicts high ADI\n")
+        elif spearman_corr < -0.5:
+            f.write("  [GOOD] Moderate negative correlation - low uncertainty predicts high ADI\n")
+        elif spearman_corr < 0:
+            f.write("  [WEAK] Weak negative correlation - Some ADI-uncertainty relationship present\n")
+        else:
+            f.write("  [WARNING] No negative correlation - Unexpected pattern!\n")
+        f.write("\n")
         
         # Global statistics by ADI
         f.write("GLOBAL STATISTICS BY ADI BIN\n")
@@ -461,7 +507,7 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
         f.write("END OF REPORT\n")
         f.write("="*80 + "\n")
     
-    logger.info(f"Summary report saved to: {base_path}_summary.txt")
+    print(f"Summary report saved to: {base_path}_summary.txt")
 
 
 # -----------------------------
@@ -471,8 +517,8 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
 def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     """Create comprehensive global analysis plots"""
     
-    fig = plt.figure(figsize=(16, 10))
-    gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+    fig = plt.figure(figsize=(14, 10))
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
     
     # ===== Row 1: Summary Statistics =====
     
@@ -508,67 +554,10 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
         ax2.text(bar.get_x() + bar.get_width()/2., height,
                 f'{count:,}', ha='center', va='bottom', fontsize=9)
     
-    # C: Box plot of distances by ADI
-    ax3 = fig.add_subplot(gs[0, 2])
-    quantiles = aggregator.global_adi.get_quantiles([0.05, 0.25, 0.5, 0.75, 0.95])
+    # ===== Row 2: Distributions and Correlation =====
     
-    box_data = []
-    for label in ADI_LABELS:
-        q = quantiles[label]
-        if not any(np.isnan(q)):
-            box_data.append({
-                'label': label,
-                'whislo': q[0],  # 5th percentile
-                'q1': q[1],      # 25th percentile
-                'med': q[2],     # 50th percentile (median)
-                'q3': q[3],      # 75th percentile
-                'whishi': q[4],  # 95th percentile
-            })
-    
-    if box_data:
-        bp = ax3.bxp(box_data, positions=range(len(box_data)), 
-                     widths=0.6, showfliers=False, patch_artist=True)
-        for patch in bp['boxes']:
-            patch.set_facecolor('lightgreen')
-            patch.set_alpha(0.7)
-    
-    ax3.set_xticks(range(len(ADI_LABELS)))
-    ax3.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
-    ax3.set_ylabel('Predicted Distance', fontsize=11, fontweight='bold')
-    ax3.set_title('C: Distance Distribution (Quantiles)', fontsize=12, fontweight='bold')
-    ax3.grid(axis='y', alpha=0.3, linestyle='--')
-    
-    # ===== Row 2: Distributions =====
-    
-    # D: Violin plots by ADI (using t-digest approximations)
-    ax4 = fig.add_subplot(gs[1, :2])
-    
-    positions = []
-    violin_data = []
-    for i, label in enumerate(ADI_LABELS):
-        samples = aggregator.global_adi.get_all_values_approximation(label, n_samples=1000)
-        if len(samples) > 0:
-            positions.append(i)
-            violin_data.append(samples)
-    
-    if violin_data:
-        parts = ax4.violinplot(violin_data, positions=positions, widths=0.7,
-                               showmeans=True, showmedians=True)
-        
-        # Color the violins
-        for pc in parts['bodies']:
-            pc.set_facecolor('skyblue')
-            pc.set_alpha(0.7)
-            pc.set_edgecolor('navy')
-    
-    ax4.set_xticks(range(len(ADI_LABELS)))
-    ax4.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
-    ax4.set_ylabel('Predicted Distance', fontsize=11, fontweight='bold')
-    ax4.set_title('D: Distance Distribution by ADI (Violin Plot)', fontsize=12, fontweight='bold')
-    ax4.grid(axis='y', alpha=0.3, linestyle='--')
-    
-    # E: Overall distance histogram
-    ax5 = fig.add_subplot(gs[1, 2])
+    # C: Overall distance histogram
+    ax3 = fig.add_subplot(gs[1, 0])
     
     # Get approximate histogram from global t-digest
     hist_bins = np.linspace(0, aggregator.global_all.mean + 3*aggregator.global_all.std, 50)
@@ -576,75 +565,46 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     
     # Plot as histogram
     bin_centers = (hist_bins[:-1] + hist_bins[1:]) / 2
-    ax5.bar(bin_centers, hist_counts, width=np.diff(hist_bins), 
+    ax3.bar(bin_centers, hist_counts, width=np.diff(hist_bins), 
             alpha=0.7, color='purple', edgecolor='darkviolet')
-    ax5.set_xlabel('Predicted Distance', fontsize=11, fontweight='bold')
-    ax5.set_ylabel('Frequency', fontsize=11, fontweight='bold')
-    ax5.set_title('E: Overall Distance Distribution', fontsize=12, fontweight='bold')
-    ax5.grid(axis='y', alpha=0.3, linestyle='--')
+    ax3.set_xlabel('Predicted Distance', fontsize=11, fontweight='bold')
+    ax3.set_ylabel('Frequency', fontsize=11, fontweight='bold')
+    ax3.set_title('C: Overall Distance Distribution', fontsize=12, fontweight='bold')
+    ax3.grid(axis='y', alpha=0.3, linestyle='--')
     
-    # ===== Row 3: Detailed Statistics =====
+    # D: ADI-Distance correlation plot (scatter with trend)
+    ax4 = fig.add_subplot(gs[1, 1])
     
-    # F: Cumulative distribution by ADI
-    ax6 = fig.add_subplot(gs[2, :2])
+    # Create scatter data using bin centers and means
+    adi_bin_centers = [0.25, 0.625, 0.8, 0.925]  # Midpoints of ADI bins
+    means_for_scatter = [mean_dist[k] for k in ADI_LABELS]
+    sizes = [aggregator.global_adi.counts[k] / 1000 for k in ADI_LABELS]  # Scale for visibility
     
-    for label in ADI_LABELS:
-        samples = aggregator.global_adi.get_all_values_approximation(label, n_samples=1000)
-        if len(samples) > 0:
-            sorted_samples = np.sort(samples)
-            cumulative = np.arange(1, len(sorted_samples) + 1) / len(sorted_samples)
-            ax6.plot(sorted_samples, cumulative, label=label, linewidth=2, alpha=0.8)
+    ax4.scatter(adi_bin_centers, means_for_scatter, s=sizes, alpha=0.6, c='steelblue', edgecolors='navy')
     
-    ax6.set_xlabel('Predicted Distance', fontsize=11, fontweight='bold')
-    ax6.set_ylabel('Cumulative Probability', fontsize=11, fontweight='bold')
-    ax6.set_title('F: Cumulative Distribution Functions by ADI', fontsize=12, fontweight='bold')
-    ax6.legend(title='ADI Bin', loc='lower right')
-    ax6.grid(alpha=0.3, linestyle='--')
+    # Add trend line
+    z = np.polyfit(adi_bin_centers, means_for_scatter, 1)
+    p = np.poly1d(z)
+    x_trend = np.linspace(0, 1, 100)
+    ax4.plot(x_trend, p(x_trend), "r--", alpha=0.8, linewidth=2, label=f'Trend: y={z[0]:.3f}x+{z[1]:.3f}')
     
-    # G: Summary statistics table
-    ax7 = fig.add_subplot(gs[2, 2])
-    ax7.axis('off')
+    # Calculate Spearman correlation (using bin data as proxy)
+    spearman_corr, spearman_p = spearmanr(adi_bin_centers, means_for_scatter)
     
-    # Create summary table
-    table_data = [['ADI Bin', 'N', 'Mean', 'Std', 'Median']]
-    for label in ADI_LABELS:
-        count = aggregator.global_adi.counts[label]
-        mean = aggregator.global_adi.get_mean_distance()[label]
-        std = aggregator.global_adi.get_std_distance()[label]
-        median = aggregator.global_adi.get_quantiles([0.5])[label][0]
-        
-        table_data.append([
-            label,
-            f'{count:,}',
-            f'{mean:.3f}' if not np.isnan(mean) else 'N/A',
-            f'{std:.3f}' if not np.isnan(std) else 'N/A',
-            f'{median:.3f}' if not np.isnan(median) else 'N/A'
-        ])
-    
-    table = ax7.table(cellText=table_data, loc='center', cellLoc='center')
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1, 2)
-    
-    # Style header row
-    for i in range(5):
-        table[(0, i)].set_facecolor('#4CAF50')
-        table[(0, i)].set_text_props(weight='bold', color='white')
-    
-    # Alternate row colors
-    for i in range(1, len(table_data)):
-        for j in range(5):
-            if i % 2 == 0:
-                table[(i, j)].set_facecolor('#f0f0f0')
-    
-    ax7.set_title('G: Summary Statistics', fontsize=12, fontweight='bold', pad=20)
+    ax4.set_xlabel('ADI (Applicability Domain Index)', fontsize=11, fontweight='bold')
+    ax4.set_ylabel('Mean Predicted Distance', fontsize=11, fontweight='bold')
+    ax4.set_title(f'D: ADI-Distance Correlation\nSpearman rho = {spearman_corr:.3f} (p={spearman_p:.4f})', 
+                  fontsize=12, fontweight='bold')
+    ax4.legend(loc='upper right', fontsize=9)
+    ax4.grid(alpha=0.3, linestyle='--')
+    ax4.set_xlim([0, 1])
     
     # Overall title
     fig.suptitle(f'Conformal Prediction Analysis - Global Summary\n({aggregator.total_chemicals:,} predictions across {len(aggregator.model_names)} models)', 
                  fontsize=14, fontweight='bold', y=0.995)
     
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    logger.info(f"Global analysis saved to: {save_path}")
+    print(f"Global analysis saved to: {save_path}")
     plt.close()
 
 
@@ -762,7 +722,7 @@ def plot_model_comparison(aggregator: ConformalAggregator, save_path: str, top_n
                  fontsize=14, fontweight='bold', y=0.995)
     
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    logger.info(f"Model comparison saved to: {save_path}")
+    print(f"Model comparison saved to: {save_path}")
     plt.close()
 
 
@@ -777,11 +737,12 @@ if __name__ == "__main__" or True:  # Works in both script and notebook mode
     print("="*60)
     print()
     
-    # Process all files
-    aggregator = process_files(upstream, prefix, ncm_code, max_files=max_files)
-    
-    # Generate plots
+    # Set up cache path
     base_path = product["results"].rsplit('.', 1)[0]
+    cache_path = f"{base_path}_aggregator_cache.pkl"
+    
+    # Process all files (will use cache if available)
+    aggregator = process_files(upstream, prefix, ncm_code, max_files=max_files or 300, cache_path=cache_path)
     
     print("\nGenerating outputs...")
     write_statistics(aggregator, base_path)
@@ -792,10 +753,11 @@ if __name__ == "__main__" or True:  # Works in both script and notebook mode
     print("Analysis complete!")
     print("="*60)
     print("\nOutput files:")
-    logger.info(f"  - {base_path}_summary.txt")
-    logger.info(f"  - {base_path}_global_stats.csv")
-    logger.info(f"  - {base_path}_model_stats.csv")
-    logger.info(f"  - {base_path}_model_adi_matrix.csv")
-    logger.info(f"  - {base_path}_global.png")
-    logger.info(f"  - {base_path}_models.png")
+    print(f"  - {base_path}_summary.txt")
+    print(f"  - {base_path}_global_stats.csv")
+    print(f"  - {base_path}_model_stats.csv")
+    print(f"  - {base_path}_model_adi_matrix.csv")
+    print(f"  - {base_path}_global.png")
+    print(f"  - {base_path}_models.png")
+    print(f"  - {cache_path} (aggregator cache)")
     print("="*60)

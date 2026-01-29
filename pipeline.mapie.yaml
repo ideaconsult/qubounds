@@ -222,12 +222,13 @@ tasks:
     #upstream: []
     product: 
       nb: "{{VEGA_CP_OUTPUT}}//outcome_plot_class.ipynb"
-      results: "{{VEGA_CP_OUTPUT}}//uncertainty_domain_figure.png"
+      results: "{{VEGA_CP_OUTPUT}}//class_lac/uncertainty_domain_figure_global.png"
     params:
       classification: True
       ncm_code: "crfecfp"
       data: "{{vega_class}}"
       prefix: "class_apply_{{input_key}}_"
+      max_files: 300
 
 
 
