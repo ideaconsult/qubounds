@@ -91,7 +91,7 @@ def figure_spearman(df, save_path=None):
                     arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
 
     # Add legend
-    ax2.legend(handles=legend_elements, loc='best', fontsize=10)
+    ax2.legend(handles=legend_elements, loc='lower left', fontsize=10)
 
     plt.tight_layout()
     if save_path is not None:
@@ -305,6 +305,6 @@ if len(combined_rows)>0:
     dataset_stats.to_excel(
         product["data"].replace(".xlsx", "_performance.xlsx"),
         index=False,
-        max_labels_panel_a=15,  # Fewer labels in Panel A
-        annotate_top_n=2        # Fewer annotations in Panel D        
+        #max_labels_panel_a=15,  # Fewer labels in Panel A
+        #annotate_top_n=2        # Fewer annotations in Panel D        
     )    

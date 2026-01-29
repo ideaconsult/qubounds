@@ -5,6 +5,9 @@ from tasks.assessment.utils import init_logging
 import matplotlib.pyplot as plt
 from IPython.display import display, Markdown, HTML
 from scipy import stats
+from tasks.mapie_diagnostic import (
+    plot_coverage_efficiency_classification
+)
 
 
 # + tags=["parameters"]
@@ -468,6 +471,8 @@ for key_star in upstream:
                 df_test['correct'] = (df_test[f'{_data}_pred'] == df_test[f'{_data}_true'])
             df_test['data'] = _data
             df_test['split'] = 'Test'
+            if f'{_data}_predicted_distance' in df_test.columns:
+                df_test = df_test.rename(columns={f'{_data}_predicted_distance': 'predicted_distance'})
             combined_rows.append(df_test)
         except Exception:
             pass
@@ -475,6 +480,8 @@ for key_star in upstream:
             df_train = pd.read_excel(file_path, sheet_name="Training PI")
             if f'{_data}_true' in df_train.columns:
                 df_train['correct'] = (df_train[f'{_data}_pred'] == df_train[f'{_data}_true'])
+            if f'{_data}_predicted_distance' in df_train.columns:
+                df_train = df_train.rename(columns={f'{_data}_predicted_distance': 'predicted_distance'})                
             df_train['data'] = _data
             df_train['split'] = 'Training'        
             combined_rows.append(df_train)
@@ -496,3 +503,12 @@ df_metrics = compare_datasets_coverage(combined_df, save_path=product["plot"].re
 df_metrics.to_excel(product["data"], index=False)
 HTML("Figure 3 — Domain Effect on Coverage Across Datasets and Splits")
 HTML("Difference between high-ADI and low-ADI coverage (Δ = Coverage_high − Coverage_low) computed separately for each dataset and split. Positive values indicate improved coverage in high-domain regions.")
+
+# Generate Figure 2 for classification
+dataset_stats = plot_coverage_efficiency_classification(
+    combined_df,
+    distance_col="predicted_distance",
+    save_path=product["plot"].replace("spearman", "coverage_efficiency"),
+    max_labels_panel_a=15,
+    annotate_top_n=3
+)

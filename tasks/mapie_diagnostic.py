@@ -1350,7 +1350,7 @@ def plot_coverage_efficiency_analysis(combined_df, save_path=None,
     size_legend = axes[1, 1].legend(legend_points, legend_labels, 
                                    scatterpoints=1, frameon=True,
                                    labelspacing=1.5, title='Dataset Size',
-                                   loc='bottom left', fontsize=8)
+                                   loc='lower left', fontsize=8)
     axes[1, 1].add_artist(size_legend)
     axes[1, 1].legend(fontsize=9, loc='lower right')
     
@@ -1383,6 +1383,267 @@ def plot_coverage_efficiency_analysis(combined_df, save_path=None,
     print(f"\nWorst Performers:")
     for _, row in worst.iterrows():
         print(f"  {row['data']:20s}: coverage={row['coverage']:.3f}, width={row['mean_width']:.4f}")
+    
+    print("="*70)
+    
+    return dataset_stats
+
+
+def plot_coverage_efficiency_classification(combined_df, distance_col, save_path=None,
+                                           max_labels_panel_a=20, annotate_top_n=3
+                                           ):
+    """
+    Four-panel coverage and efficiency analysis for classification.
+    Uses prediction distance as efficiency metric (lower = more certain).
+    
+    Args:
+        combined_df: DataFrame with ['data', 'In_Coverage', 'ADI', distance_col]
+        distance_col: Name of prediction distance column (e.g., 'ALGAE_COMBASECLASS_predicted_distance')
+        save_path: Path to save figure
+        max_labels_panel_a: Maximum labels in Panel A
+        annotate_top_n: Number to annotate in Panel D
+    """
+    
+    # Calculate per-dataset statistics (aggregating all data together)
+    dataset_stats = combined_df.groupby('data').agg({
+        'In_Coverage': ['mean', 'count'],
+        distance_col: ['mean', 'median', 'std'],
+        'ADI': 'mean'
+    }).reset_index()
+    
+    dataset_stats.columns = ['data', 'coverage', 'n', 
+                            'mean_distance', 'median_distance', 'std_distance', 'mean_adi']
+    dataset_stats = dataset_stats.sort_values('coverage')
+    
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # ========== PANEL A: Coverage by Dataset ==========
+    # ========== PANEL A: Coverage by Dataset (CLEANER VERSION) ==========
+    colors_coverage = [
+        '#2E7D32' if 0.85 <= cov <= 0.95 else
+        '#FFA726' if 0.80 <= cov < 0.85 or 0.95 < cov <= 1.0 else
+        '#D32F2F'
+        for cov in dataset_stats['coverage']
+    ]
+
+    y_pos = np.arange(len(dataset_stats))
+    axes[0, 0].barh(y_pos, dataset_stats['coverage'], color=colors_coverage,
+                    alpha=0.8, edgecolor='none', linewidth=0.5)
+
+    axes[0, 0].axvline(x=0.9, color='red', linestyle='--', linewidth=2,
+                    label='90% Target')
+    axes[0, 0].axvspan(0.85, 0.95, alpha=0.1, color='green',
+                    label='Acceptable')
+
+    axes[0, 0].set_xlabel('Coverage Rate', fontsize=12, fontweight='bold')
+    axes[0, 0].set_title('A. Coverage by Endpoint (Sorted)', 
+                        fontsize=13, fontweight='bold')
+    axes[0, 0].set_xlim(0.7, 1.02)
+    axes[0, 0].legend(fontsize=9, loc='lower right')
+    axes[0, 0].grid(True, alpha=0.3, axis='x')
+
+    if len(dataset_stats) > 20:
+        axes[0, 0].set_yticks([])
+        axes[0, 0].set_ylabel(f'Endpoints (n={len(dataset_stats)}, sorted by coverage)', 
+                            fontsize=11, fontweight='bold')
+    else:
+        # Only if 20 or fewer, show all labels
+        axes[0, 0].set_yticks(y_pos)
+        axes[0, 0].set_yticklabels(dataset_stats['data'], fontsize=8)
+
+    # Summary stats - move to upper left to avoid blocking bars
+    n_good = sum((0.85 <= cov <= 0.95) for cov in dataset_stats['coverage'])
+    axes[0, 0].text(0.72, 0.98,  # Changed from 0.02 to 0.72 (upper LEFT of plot area)
+                f'Within target: {n_good}/{len(dataset_stats)}\n'
+                f'Mean: {dataset_stats["coverage"].mean():.3f}\n'
+                f'Median: {dataset_stats["coverage"].median():.3f}',
+                transform=axes[0, 0].transAxes, fontsize=9,
+                verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
+
+    # ========== PANEL B: Coverage vs Dataset Size ==========
+    axes[0, 1].scatter(dataset_stats['n'], dataset_stats['coverage'],
+                      s=100, alpha=0.6, c=colors_coverage, 
+                      edgecolor='black', linewidth=1)
+    
+    axes[0, 1].axhline(y=0.9, color='red', linestyle='--', linewidth=2, alpha=0.7)
+    axes[0, 1].axhspan(0.85, 0.95, alpha=0.1, color='green')
+    
+    axes[0, 1].set_xscale('log')
+    axes[0, 1].set_xlabel('Dataset Size (n)', fontsize=12, fontweight='bold')
+    axes[0, 1].set_ylabel('Coverage Rate', fontsize=12, fontweight='bold')
+    axes[0, 1].set_title('B. Coverage Stability Across Dataset Sizes',
+                        fontsize=13, fontweight='bold')
+    axes[0, 1].set_ylim(0.7, 1.02)
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # Annotate extreme outliers
+    extreme = dataset_stats[(dataset_stats['coverage'] < 0.8) |
+                           (dataset_stats['coverage'] > 1.0)]
+    for _, row in extreme.iterrows():
+        axes[0, 1].annotate(row['data'],
+                           xy=(row['n'], row['coverage']),
+                           xytext=(10, 10), textcoords='offset points',
+                           fontsize=7,
+                           bbox=dict(boxstyle='round,pad=0.3',
+                                    facecolor='yellow', alpha=0.7),
+                           arrowprops=dict(arrowstyle='->',
+                                         connectionstyle='arc3,rad=0.2',
+                                         linewidth=0.5))
+    
+    # Correlation test
+    rho_size, p_size = spearmanr(dataset_stats['n'], dataset_stats['coverage'])
+    axes[0, 1].text(0.02, 0.02,
+                   f'Spearman ρ = {rho_size:.3f}\np = {p_size:.3f}',
+                   transform=axes[0, 1].transAxes, fontsize=9,
+                   verticalalignment='bottom',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # ========== PANEL C: Prediction Distance Distribution ==========
+    # Boxplots of distance by dataset
+    data_for_box = [combined_df[combined_df['data'] == d][distance_col].values
+                    for d in dataset_stats['data']]
+    
+    bp = axes[1, 0].boxplot(data_for_box, patch_artist=True,
+                           showfliers=False, vert=False)
+    
+    for patch in bp['boxes']:
+        patch.set_facecolor('#2196F3')
+        patch.set_alpha(0.6)
+    
+    # Conditional labeling
+    if len(dataset_stats) <= 20:
+        axes[1, 0].set_yticks(range(1, len(dataset_stats) + 1))
+        axes[1, 0].set_yticklabels(dataset_stats['data'], fontsize=7)
+    else:
+        axes[1, 0].set_ylabel('Endpoints (sorted by coverage)',
+                             fontsize=12, fontweight='bold')
+        axes[1, 0].set_yticks([])
+    
+    axes[1, 0].set_xlabel('Prediction Distance', fontsize=12, fontweight='bold')
+    axes[1, 0].set_title('C. Prediction Distance by Endpoint',
+                        fontsize=13, fontweight='bold')
+    axes[1, 0].grid(True, alpha=0.3, axis='x')
+    
+    # Add statistics
+    axes[1, 0].text(0.98, 0.98,
+                   f'Overall:\n'
+                   f'Mean: {combined_df[distance_col].mean():.3f}\n'
+                   f'Median: {combined_df[distance_col].median():.3f}',
+                   transform=axes[1, 0].transAxes, fontsize=9,
+                   verticalalignment='top', horizontalalignment='right',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
+    
+    # ========== PANEL D: Coverage-Certainty Tradeoff ==========
+    # Lower distance = more certain (better)
+    # High coverage + low distance = ideal (top-left)
+    
+    sizes = np.sqrt(dataset_stats['n']) * 2
+    
+    scatter = axes[1, 1].scatter(dataset_stats['mean_distance'],
+                                dataset_stats['coverage'],
+                                s=sizes, alpha=0.6, c=colors_coverage,
+                                edgecolor='black', linewidth=0.5)
+    
+    # Reference lines
+    axes[1, 1].axhline(y=0.9, color='red', linestyle='--', linewidth=1.5,
+                      alpha=0.5, label='Target coverage')
+    median_dist = dataset_stats['mean_distance'].median()
+    axes[1, 1].axvline(x=median_dist, color='blue', linestyle='--',
+                      linewidth=1.5, alpha=0.5, label='Median distance')
+    
+    # Ideal region: high coverage + low distance
+    axes[1, 1].fill_between([0, median_dist], 0.9, 1.02,
+                           alpha=0.1, color='green', label='Ideal region')
+    
+    axes[1, 1].set_xlabel('Mean Prediction Distance (Uncertainty)',
+                         fontsize=12, fontweight='bold')
+    axes[1, 1].set_ylabel('Coverage Rate (Validity)',
+                         fontsize=12, fontweight='bold')
+    axes[1, 1].set_title('D. Coverage-Certainty Tradeoff',
+                        fontsize=13, fontweight='bold')
+    axes[1, 1].set_ylim(0.7, 1.02)
+    axes[1, 1].legend(fontsize=9, loc='lower right')
+    axes[1, 1].grid(True, alpha=0.3)
+    
+    # Annotate best/worst
+    # Best = high coverage + low distance
+    dataset_stats['score'] = dataset_stats['coverage'] / (dataset_stats['mean_distance'] + 0.01)
+    best = dataset_stats.nlargest(annotate_top_n, 'score')
+    worst = dataset_stats.nsmallest(annotate_top_n, 'score')
+    
+    for i, (_, row) in enumerate(best.iterrows()):
+        offset_y = 15 + i * 15
+        axes[1, 1].annotate(row['data'],
+                           xy=(row['mean_distance'], row['coverage']),
+                           xytext=(-30, offset_y), textcoords='offset points',
+                           fontsize=7, color='darkgreen',
+                           bbox=dict(boxstyle='round,pad=0.3',
+                                    facecolor='lightgreen', alpha=0.7,
+                                    edgecolor='none'),
+                           arrowprops=dict(arrowstyle='->',
+                                         color='darkgreen',
+                                         linewidth=0.5, alpha=0.7))
+    
+    for i, (_, row) in enumerate(worst.iterrows()):
+        offset_y = -15 - i * 15
+        axes[1, 1].annotate(row['data'],
+                           xy=(row['mean_distance'], row['coverage']),
+                           xytext=(30, offset_y), textcoords='offset points',
+                           fontsize=7, color='darkred',
+                           bbox=dict(boxstyle='round,pad=0.3',
+                                    facecolor='lightcoral', alpha=0.7,
+                                    edgecolor='none'),
+                           arrowprops=dict(arrowstyle='->',
+                                         color='darkred',
+                                         linewidth=0.5, alpha=0.7))
+    
+    # Size legend
+    legend_sizes = [100, 1000, 10000]
+    legend_points = [plt.scatter([], [], s=np.sqrt(s)*2, c='gray',
+                                alpha=0.6, edgecolor='black')
+                    for s in legend_sizes]
+    size_legend = axes[1, 1].legend(legend_points,
+                                   [f'n={s:,}' for s in legend_sizes],
+                                   scatterpoints=1, frameon=True,
+                                   labelspacing=1.5, title='Dataset Size',
+                                   loc='lower left', fontsize=8)
+    axes[1, 1].add_artist(size_legend)
+    axes[1, 1].legend(fontsize=9, loc='lower right')
+    
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # Print summary
+    print("\n" + "="*70)
+    print("CLASSIFICATION COVERAGE AND CERTAINTY SUMMARY")
+    print("="*70)
+    print(f"\nDatasets analyzed: {len(dataset_stats)}")
+    print(f"\nCoverage Statistics:")
+    print(f"  Mean: {dataset_stats['coverage'].mean():.3f}")
+    print(f"  Median: {dataset_stats['coverage'].median():.3f}")
+    print(f"  Range: [{dataset_stats['coverage'].min():.3f}, {dataset_stats['coverage'].max():.3f}]")
+    print(f"  Within target (0.85-0.95): {n_good}/{len(dataset_stats)} ({n_good/len(dataset_stats)*100:.1f}%)")
+    
+    print(f"\nPrediction Distance (Uncertainty):")
+    print(f"  Mean: {dataset_stats['mean_distance'].mean():.3f}")
+    print(f"  Median: {dataset_stats['mean_distance'].median():.3f}")
+    print(f"  Range: [{dataset_stats['mean_distance'].min():.3f}, {dataset_stats['mean_distance'].max():.3f}]")
+    
+    rho_dist_cov = spearmanr(dataset_stats['mean_distance'], dataset_stats['coverage'])
+    print(f"\nCorrelation Tests:")
+    print(f"  Distance vs Coverage: ρ = {rho_dist_cov[0]:.3f}, p = {rho_dist_cov[1]:.3f}")
+    print(f"  Dataset size vs Coverage: ρ = {rho_size:.3f}, p = {p_size:.3f}")
+    
+    print(f"\nBest Performers (high coverage, low distance):")
+    for _, row in best.iterrows():
+        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, distance={row['mean_distance']:.3f}")
+    
+    print(f"\nWorst Performers:")
+    for _, row in worst.iterrows():
+        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, distance={row['mean_distance']:.3f}")
     
     print("="*70)
     
