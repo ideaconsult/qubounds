@@ -237,7 +237,7 @@ tasks:
     upstream: ["regr_apply_*", "regression_summary_mapie"]
     #upstream: []
     product: 
-      nb: "{{VEGA_CP_OUTPUT}}//results/outcome_plot_regr.ipynb"
+      nb: "{{VEGA_CP_OUTPUT}}//results/regression/outcome_plot_regr.ipynb"
       results: "{{VEGA_CP_OUTPUT}}//results/regression/uncertainty_domain_figure_global.png"
     params:
       classification: False

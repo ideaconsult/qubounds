@@ -20,6 +20,7 @@ vega_models = None
 upstream = None
 prefix = None
 max_files = None
+data = None
 # -
 
 # Suppress openpyxl warnings
@@ -37,7 +38,7 @@ CHUNK_SIZE = 50000  # Process data in chunks after loading (memory management)
 
 # Determine metric name based on task type
 METRIC_NAME = "predicted_distance" if classification else "Interval_Width"
-METRIC_LABEL = "Predicted Distance" if classification else "Interval Width"
+METRIC_LABEL = "Predicted Distance" if classification else "Relative Interval Width"
 METRIC_COL_SUFFIX = "predicted_distance" if classification else "Interval_Width"
 
 
@@ -67,6 +68,17 @@ class StreamingStats:
             if not np.isnan(v):
                 self.update(v)
     
+    def merge(self, other: "StreamingStats"):
+        """Merge another StreamingStats into this one"""
+        if other.n == 0:
+            return
+
+        total_n = self.n + other.n
+        delta = other.mean - self.mean
+        self.mean = (self.n*self.mean + other.n*other.mean)/total_n
+        self.M2 += other.M2 + delta**2 * self.n*other.n/total_n
+        self.n = total_n
+
     @property
     def variance(self) -> float:
         return self.M2 / self.n if self.n > 1 else 0.0
@@ -279,12 +291,59 @@ class ConformalAggregator:
         
         return aggregator
     
-    def __setstate__(self, state):
-        """Custom unpickling to handle backward compatibility"""
-        self.__dict__.update(state)
-        # Ensure is_classification exists (backward compatibility)
-        if not hasattr(self, 'is_classification'):
-            self.is_classification = True
+    def filter_models(self, excluded_models: List[str]) -> "ConformalAggregator":
+        """
+        Return a new ConformalAggregator containing only models not in excluded_models.
+        Global statistics are recomputed exactly from the retained models.
+
+        Parameters
+        ----------
+        excluded_models : List[str]
+            Model names to exclude.
+
+        Returns
+        -------
+        ConformalAggregator
+            Filtered aggregator with updated global stats.
+        """
+        excluded_models = set(excluded_models)
+        new_aggr = ConformalAggregator(is_classification=self.is_classification)
+
+        for model_name in self.model_names:
+            if model_name in excluded_models:
+                continue
+
+            # Copy model-level stats
+            new_aggr.model_names.append(model_name)
+            new_aggr.model_adi[model_name] = self.model_adi[model_name]
+            new_aggr.model_all[model_name] = self.model_all[model_name]
+
+            # Merge into global ADI bins
+            for bin_label in ADI_LABELS:
+                new_aggr.global_adi.counts[bin_label] += self.model_adi[model_name].counts[bin_label]
+
+                # Merge StreamingStats (means & variance)
+                new_aggr.global_adi.stats[bin_label].merge(self.model_adi[model_name].stats[bin_label])
+
+                # Merge TDigest centroids
+                new_aggr.global_adi.digests[bin_label].centroids.extend(
+                    self.model_adi[model_name].digests[bin_label].centroids
+                )
+
+            # Merge overall stats
+            new_aggr.global_all.merge(self.model_all[model_name])
+
+            # Merge global t-digest
+            if hasattr(self.global_digest, "centroids"):
+                new_aggr.global_digest.centroids.extend(
+                    self.global_digest.centroids
+                )
+
+            # Update total count
+            new_aggr.total_chemicals += sum(self.model_adi[model_name].counts.values())
+
+        return new_aggr
+
 
 
 # -----------------------------
@@ -615,12 +674,18 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     hist_bins = np.linspace(0, aggregator.global_all.mean + 3*aggregator.global_all.std, 50)
     hist_counts = aggregator.global_digest.histogram(hist_bins)
     
-    # Plot as histogram
+    # Histogram as density
     bin_centers = (hist_bins[:-1] + hist_bins[1:]) / 2
-    ax3.bar(bin_centers, hist_counts, width=np.diff(hist_bins), 
+    bin_widths = np.diff(hist_bins)
+    total_counts = hist_counts.sum()
+
+    # Convert counts to density
+    densities = hist_counts / (total_counts * bin_widths)
+
+    ax3.bar(bin_centers, densities, width=bin_widths, 
             alpha=0.7, color='purple', edgecolor='darkviolet')
     ax3.set_xlabel(metric_label, fontsize=11, fontweight='bold')
-    ax3.set_ylabel('Frequency', fontsize=11, fontweight='bold')
+    ax3.set_ylabel('Density', fontsize=11, fontweight='bold')
     ax3.set_title(f'C: Overall {metric_label} Distribution', fontsize=12, fontweight='bold')
     ax3.grid(axis='y', alpha=0.3, linestyle='--')
     
@@ -797,19 +862,28 @@ if __name__ == "__main__" or True:  # Works in both script and notebook mode
     base_path = product["results"].rsplit('.', 1)[0]
     task_suffix = "classification" if classification else "regression"
     cache_path = f"{base_path}_aggregator_cache_{task_suffix}.pkl"
-    
-    summary_path = upstream.get("regression_summary_mapie", {}).get("data", None)
-    if summary_path is not None:
-        _tmp = pd.read_excel(summary_path)[["Dataset Name", "outlier"]]
-        _tmp.loc[~_tmp["outlier"] ]
-        logger.info(_tmp.loc[_tmp["outlier"]]["Dataset Name"].unique())
-        data = _tmp["Dataset Name"].unique()
-    scaler = None if summary_path is None else IntervalScaler.from_summary_file(summary_path)
+
+    if classification:
+        excluded_models = ["SKIN_IRRITATION", "CARC_SFO_CLASS", "EYE IRRITATION", "EYE_IRRITATION_KNN"]
+        scaler = None
+    else:
+        summary_path = upstream.get(f"{task_suffix}_summary_mapie", {}).get("data", None)
+        excluded_models = []
+        if summary_path is not None:
+            _tmp = pd.read_excel(summary_path)[["Dataset Name", "outlier", "Relative Interval Width"]]
+            _tmp["outlier"] = _tmp["outlier"].astype(bool)
+            excluded_models = _tmp.loc[_tmp["outlier"]]["Dataset Name"].unique()
+            knn_models = _tmp.loc[_tmp["Relative Interval Width"]<0.003]["Dataset Name"].unique()
+            print(knn_models)
+            excluded_models = np.union1d(excluded_models, knn_models)
+            scaler = IntervalScaler.from_summary_file(summary_path)
 
     # Process all files (will use cache if available)
     aggregator = process_files(upstream, prefix, ncm_code, classification, 
                                max_files=max_files or 300, cache_path=cache_path,
                                scaler=scaler, datasets=data)
+    
+    aggregator = aggregator.filter_models(excluded_models)
     
     print("\nGenerating outputs...")
     write_statistics(aggregator, base_path)

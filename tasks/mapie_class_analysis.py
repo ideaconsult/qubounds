@@ -100,9 +100,107 @@ If the NCM had been more confident (higher P(distance=0)), the set would be smal
 confident (flatter distribution), the set would include class 0 as well.
 """
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
+def plot_ncm_coverage_vs_sigma(df, output_path=None, split_col='Split', alpha=0.1):
+    """
+    NCM comparison figure:
+    - Left: sigma_r2 (uncertainty measure) per NCM, split-aware horizontal bar chart
+    - Right: coverage distribution across all splits per NCM (boxplots)
+    """
+    # Fill missing NCMs
+    df['ncm'] = df['ncm'].fillna('None')
+
+    # Determine unique splits and colors
+    splits = df[split_col].unique()
+    colors = plt.cm.Set2.colors[:len(splits)]
+    split_color_map = dict(zip(splits, colors))
+
+    # Order NCMs by overall sigma_r2 (mean across splits)
+    if 'sigma_r2' not in df.columns:
+        raise ValueError("Column 'sigma_r2' is required for left plot.")
+    
+    ncm_order = df.groupby('ncm')['sigma_r2'].mean().sort_values(ascending=False).index
+    ncm_count = len(ncm_order)
+    width = 0.8 / len(splits)
+
+    fig, axes = plt.subplots(1, 2, figsize=(18, 6))
+
+    # ----------------------
+    # Left panel: sigma_r2 comparison
+    # ----------------------
+    df_grouped = df.groupby(['ncm', split_col])['sigma_r2'].mean().reset_index()
+
+    for i, sp in enumerate(splits):
+        sub = df_grouped[df_grouped[split_col] == sp].set_index('ncm').reindex(ncm_order)
+        axes[0].barh(
+            np.arange(ncm_count) + i*width,
+            sub['sigma_r2'],
+            height=width,
+            label=str(sp),
+            color=split_color_map[sp],
+            edgecolor='black'
+        )
+
+    axes[0].set_yticks(np.arange(ncm_count) + width*(len(splits)-1)/2)
+    axes[0].set_yticklabels(ncm_order, fontsize=10)
+    axes[0].set_xlabel('σ²_R (sigma_r2)', fontsize=12, fontweight='bold')
+    axes[0].set_title('Prediction Uncertainty (σ²_R) by NCM', fontsize=14, fontweight='bold')
+    axes[0].grid(axis='x', alpha=0.3)
+    axes[0].legend(title='Split')
+
+    # ----------------------
+    # Right panel: coverage distribution
+    # ----------------------
+    positions = []
+    box_data = []
+    box_colors = []
+    offset = 0
+    for i, ncm in enumerate(ncm_order):
+        for j, sp in enumerate(splits):
+            data = df[(df['ncm']==ncm) & (df[split_col]==sp)]['Empirical Coverage'].values
+            if len(data) > 0:
+                box_data.append(data)
+                positions.append(i + offset)
+                box_colors.append(split_color_map[sp])
+            offset += width
+        offset = 0
+
+    bp = axes[1].boxplot(
+        box_data,
+        positions=positions,
+        widths=width*0.9,
+        patch_artist=True,
+        medianprops=dict(color='black', linewidth=2),
+        boxprops=dict(edgecolor='black', linewidth=1.5),
+        whiskerprops=dict(color='black', linewidth=1.5),
+        capprops=dict(color='black', linewidth=1.5),
+        flierprops=dict(marker='o', markerfacecolor='red', markersize=5, alpha=0.5)
+    )
+
+    # Color boxes by split
+    for patch, color in zip(bp['boxes'], box_colors):
+        patch.set_facecolor(color)
+
+    axes[1].axhline(1-alpha, color='blue', linestyle='--', linewidth=2)
+    cluster_centers = np.arange(ncm_count)
+    axes[1].set_xticks(cluster_centers)
+    axes[1].set_xticklabels(ncm_order, rotation=45, ha='right')
+    axes[1].set_ylabel('Coverage', fontsize=12, fontweight='bold')
+    axes[1].set_title('Coverage Distribution Across Splits', fontsize=14, fontweight='bold')
+    axes[1].set_ylim(0.4, 1.05)
+    axes[1].grid(axis='y', alpha=0.3)
+
+    # Add legend for splits
+    for i, sp in enumerate(splits):
+        axes[1].bar(0,0,color=split_color_map[sp], label=str(sp))
+    axes[1].legend(title='Split')
+
+    plt.tight_layout()
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to {output_path}")
+
+    return fig
+
 
 def plot_ncm_coverage_comparison(df, output_path=None, split_col='Split', alpha=0.1):
     """
@@ -454,8 +552,9 @@ print(df["ncm"].unique())
 # Create plots
 #Test
 fig1 = plot_ncm_coverage_comparison(df, output_path=os.path.join(product["data"],'ncm_comparison_calibration.png'), split_col="Split")
+fig1 = plot_ncm_coverage_vs_sigma(df, output_path=os.path.join(product["data"],'ncm_comparison_sigma.png'), split_col="Split")
 
-fig2 = plot_ncm_heatmap(df, output_path=os.path.join(product["data"],'ncm_correlation_heatmap.png'))
+#fig2 = plot_ncm_heatmap(df, output_path=os.path.join(product["data"],'ncm_correlation_heatmap.png'))
 fig3 = plot_classifier_vs_regressor_comparison(df, output_path=os.path.join(product["data"],'classifier_vs_regressor.png'))
 print_ncm_summary_stats(df)
 

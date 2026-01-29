@@ -462,19 +462,24 @@ for key_star in upstream:
         _data = key.replace("mapiecproba_", "").replace("mapiec_", "").replace(f"_{ncm}", "")
         file_path = upstream[key_star][key]["data"]
         # Load classification results
-        df_test = pd.read_excel(file_path, sheet_name="Prediction Intervals")
-        if f'{_data}_true' in df_test.columns:
-            df_test['correct'] = (df_test[f'{_data}_pred'] == df_test[f'{_data}_true'])
-        df_test['data'] = _data
-        df_test['split'] = 'Test'
-        combined_rows.append(df_test)
-
-        df_train = pd.read_excel(file_path, sheet_name="Training PI")
-        if f'{_data}_true' in df_train.columns:
-            df_train['correct'] = (df_train[f'{_data}_pred'] == df_train[f'{_data}_true'])
-        df_train['data'] = _data
-        df_train['split'] = 'Training'        
-        combined_rows.append(df_train)
+        try:
+            df_test = pd.read_excel(file_path, sheet_name="Prediction Intervals")
+            if f'{_data}_true' in df_test.columns:
+                df_test['correct'] = (df_test[f'{_data}_pred'] == df_test[f'{_data}_true'])
+            df_test['data'] = _data
+            df_test['split'] = 'Test'
+            combined_rows.append(df_test)
+        except Exception:
+            pass
+        try:
+            df_train = pd.read_excel(file_path, sheet_name="Training PI")
+            if f'{_data}_true' in df_train.columns:
+                df_train['correct'] = (df_train[f'{_data}_pred'] == df_train[f'{_data}_true'])
+            df_train['data'] = _data
+            df_train['split'] = 'Training'        
+            combined_rows.append(df_train)
+        except Exception:
+            pass
 
 combined_df = pd.concat(combined_rows, ignore_index=True)
 
