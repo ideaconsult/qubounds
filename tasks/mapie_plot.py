@@ -167,6 +167,8 @@ combined_rows = []
 for key_star in upstream:
     logger.info(f"{key_star}")
     for key in upstream[key_star]:
+        if key.split("_")[-1] != ncm:
+            continue        
         _data = key.replace("mapie_","").replace(f"_{ncm}","")
         if _data not in data:
             continue
