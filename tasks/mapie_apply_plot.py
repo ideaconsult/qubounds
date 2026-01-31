@@ -37,10 +37,10 @@ ADI_LABELS = ["Very Low", "Low", "Moderate", "High"]
 CHUNK_SIZE = 50000  # Process data in chunks after loading (memory management)
 
 # Determine metric name based on task type
-METRIC_NAME = "predicted_distance" if classification else "Interval_Width"
-METRIC_LABEL = "Predicted Distance" if classification else "Relative Interval Width"
-METRIC_COL_SUFFIX = "predicted_distance" if classification else "Interval_Width"
-
+METRIC_NAME = "probs_distance" if classification else "Interval_Width"
+METRIC_LABEL = "Prediction Confidence" if classification else "Relative Interval Width"
+METRIC_COL_SUFFIX = "probs_distance" if classification else "Interval_Width"
+HIGHER_IS_BETTER = classification
 
 # -----------------------------
 # STREAMING STATISTICS CLASSES
@@ -435,7 +435,7 @@ def process_files(upstream, prefix, ncm_code, is_classification, max_files=300,
 # STATISTICS OUTPUT
 # -----------------------------
 
-def write_statistics(aggregator: ConformalAggregator, base_path: str):
+def write_statistics(aggregator: ConformalAggregator, base_path: str, higher_is_better=HIGHER_IS_BETTER):
     """Write comprehensive statistics to files"""
     
     # Calculate correlation metrics (Distance/Width to ADI - showing robustness)
@@ -498,12 +498,16 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
             'Overall_Std': overall_std,
             'VeryLow_Mean': model_mean_metric.get('Very Low', np.nan),
             'VeryLow_Median': model_quantiles.get('Very Low', [np.nan]*3)[1],
+            'VeryLow_Std': model_std_metric.get('Very Low', np.nan),
             'Low_Mean': model_mean_metric.get('Low', np.nan),
             'Low_Median': model_quantiles.get('Low', [np.nan]*3)[1],
+            'Low_Std': model_std_metric.get('Low', np.nan),
             'Moderate_Mean': model_mean_metric.get('Moderate', np.nan),
             'Moderate_Median': model_quantiles.get('Moderate', [np.nan]*3)[1],
+            'Moderate_Std': model_std_metric.get('Moderate', np.nan),
             'High_Mean': model_mean_metric.get('High', np.nan),
             'High_Median': model_quantiles.get('High', [np.nan]*3)[1],
+            'High_Std': model_std_metric.get('Moderate', np.nan),
         })
     
     df_models = pd.DataFrame(model_stats_data)
@@ -550,18 +554,34 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
         f.write(f"Spearman rho (rank correlation): {spearman_corr:.4f} (p-value: {spearman_p:.4e})\n")
         f.write(f"Pearson r (linear correlation): {pearson_corr:.4f}\n")
         f.write(f"\nInterpretation:\n")
-        if spearman_corr < -0.7:
-            f.write("  [EXCELLENT] Strong negative correlation - CP is robust and reliable\n")
-            f.write("  Low uncertainty strongly indicates high applicability domain\n")
-        elif spearman_corr < -0.5:
-            f.write("  [GOOD] Moderate negative correlation - CP is sufficiently robust\n")
-            f.write("  Low uncertainty moderately indicates high applicability domain\n")
-        elif spearman_corr < 0:
-            f.write("  [WEAK] Weak negative correlation - CP shows some robustness\n")
-            f.write("  Uncertainty-applicability relationship is present but weak\n")
+        spearman_bins = [] if classification else [-0.7, -0.5, 0]
+        # tbd optimize
+        if higher_is_better:
+            if spearman_corr < -0.7:
+                f.write("  [EXCELLENT] Strong negative correlation - CP is robust and reliable\n")
+                f.write("  Low uncertainty strongly indicates high applicability domain\n")
+            elif spearman_corr < -0.5:
+                f.write("  [GOOD] Moderate negative correlation - CP is sufficiently robust\n")
+                f.write("  Low uncertainty moderately indicates high applicability domain\n")
+            elif spearman_corr < 0:
+                f.write("  [WEAK] Weak negative correlation - CP shows some robustness\n")
+                f.write("  Uncertainty-applicability relationship is present but weak\n")
+            else:
+                f.write("  [WARNING] No negative correlation - CP may not be robust!\n")
+                f.write("  Uncertainty does not properly reflect applicability domain\n")
         else:
-            f.write("  [WARNING] No negative correlation - CP may not be robust!\n")
-            f.write("  Uncertainty does not properly reflect applicability domain\n")
+            if spearman_corr > 0.7:
+                f.write("  [EXCELLENT] Strong positive correlation - CP is robust and reliable\n")
+                f.write("  Low uncertainty strongly indicates high applicability domain\n")
+            elif spearman_corr > -0.5:
+                f.write("  [GOOD] Moderate positive correlation - CP is sufficiently robust\n")
+                f.write("  Low uncertainty moderately indicates high applicability domain\n")
+            elif spearman_corr > 0:
+                f.write("  [WEAK] Weak positive correlation - CP shows some robustness\n")
+                f.write("  Uncertainty-applicability relationship is present but weak\n")
+            else:
+                f.write("  [WARNING] No positive correlation - CP may not be robust!\n")
+                f.write("  Uncertainty does not properly reflect applicability domain\n")            
         f.write("\n")
         
         # Global statistics by ADI
@@ -580,13 +600,22 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
             f.write(f"{label:<15} {count:<12,} {pct:<8.2f} {mean:<10.4f} {std:<10.4f} {median:<10.4f} {q25:<10.4f} {q75:<10.4f}\n")
         
         f.write("\n\n")
-        
-        # Model rankings
+         # Model rankings
         model_stats = [(name, aggregator.model_all[name].mean, sum(aggregator.model_adi[name].counts.values())) 
                        for name in aggregator.model_names]
-        model_stats.sort(key=lambda x: x[1])
         
-        f.write(f"MODEL RANKINGS (BY MEAN {metric_label.upper()} - LOWER = MORE CERTAIN)\n")
+        # Sort based on task type
+        # Regression: lower interval width = more certain (ascending sort)
+        # Classification: higher confidence = more certain (descending sort)
+        reverse_sort = aggregator.is_classification
+        model_stats.sort(key=lambda x: x[1], reverse=reverse_sort)
+        
+        # Direction-dependent labels
+        direction_label = "HIGHER = MORE CERTAIN" if aggregator.is_classification else "LOWER = MORE CERTAIN"
+        extremum_certain = "Highest" if aggregator.is_classification else "Lowest"
+        extremum_uncertain = "Lowest" if aggregator.is_classification else "Highest"
+        
+        f.write(f"MODEL RANKINGS (BY MEAN {metric_label.upper()} - {direction_label})\n")
         f.write("-"*80 + "\n")
         f.write(f"{'Rank':<6} {'Model':<50} {'Mean':<15} {'N Predictions':<15}\n")
         f.write("-"*80 + "\n")
@@ -597,14 +626,14 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
         f.write("\n\n")
         
         # Top 10 and Bottom 10
-        f.write(f"TOP 10 MOST CERTAIN MODELS (Lowest Mean {metric_label})\n")
+        f.write(f"TOP 10 MOST CERTAIN MODELS ({extremum_certain} Mean {metric_label})\n")
         f.write("-"*80 + "\n")
         for i, (name, mean, count) in enumerate(model_stats[:10], 1):
             f.write(f"{i:2d}. {name[:60]:<60} {mean:.4f}\n")
         
         f.write("\n")
         
-        f.write(f"TOP 10 MOST UNCERTAIN MODELS (Highest Mean {metric_label})\n")
+        f.write(f"TOP 10 MOST UNCERTAIN MODELS ({extremum_uncertain} Mean {metric_label})\n")
         f.write("-"*80 + "\n")
         for i, (name, mean, count) in enumerate(reversed(model_stats[-10:]), 1):
             f.write(f"{i:2d}. {name[:60]:<60} {mean:.4f}\n")
@@ -613,7 +642,7 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str):
         f.write("="*80 + "\n")
         f.write("END OF REPORT\n")
         f.write("="*80 + "\n")
-    
+        
     logger.info(f"Summary report saved to: {base_path}_summary.txt")
 
 
@@ -646,7 +675,8 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     ax1.set_xticks(x_pos)
     ax1.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
     ax1.set_ylabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
-    ax1.set_title('A: Uncertainty vs Applicability Domain', fontsize=12, fontweight='bold')
+    what = "Certainty" if aggregator.is_classification else "Efficiency"
+    ax1.set_title(f'A: {what} vs Applicability Domain', fontsize=12, fontweight='bold')
     ax1.grid(axis='y', alpha=0.3, linestyle='--')
     
     # B: Sample counts per ADI bin
@@ -689,7 +719,7 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     ax3.set_title(f'C: Overall {metric_label} Distribution', fontsize=12, fontweight='bold')
     ax3.grid(axis='y', alpha=0.3, linestyle='--')
     
-    # D: Metric-to-ADI correlation plot (demonstrating CP robustness)
+   # D: Metric-to-ADI correlation plot (demonstrating CP robustness)
     ax4 = fig.add_subplot(gs[1, 1])
     
     # Create scatter data using bin centers and means
@@ -709,14 +739,36 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     # Calculate Spearman correlation (Metric to ADI)
     spearman_corr, spearman_p = spearmanr(means_for_scatter, adi_bin_centers)
     
+    # Interpretation based on task type and correlation direction
+    if aggregator.is_classification:
+        # Classification: expect positive correlation (high ADI → high confidence)
+        expected_sign = "positive"
+        if spearman_corr > 0.3:
+            interpretation = "✓ Good"
+        elif spearman_corr > 0:
+            interpretation = "○ Weak"
+        else:
+            interpretation = "⚠ Unexpected"
+    else:
+        # Regression: expect negative correlation (high ADI → low interval width)
+        expected_sign = "negative"
+        if spearman_corr < -0.3:
+            interpretation = "✓ Good"
+        elif spearman_corr < 0:
+            interpretation = "○ Weak"
+        else:
+            interpretation = "⚠ Unexpected"
+    
     ax4.set_xlabel('ADI (Applicability Domain Index)', fontsize=11, fontweight='bold')
     ax4.set_ylabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
-    ax4.set_title(f'D: CP Robustness Check\nSpearman rho = {spearman_corr:.3f} (p={spearman_p:.4f})', 
+    ax4.set_title(f'D: CP Robustness Check ({interpretation})\n'
+                  f'Spearman ρ = {spearman_corr:.3f} (p={spearman_p:.4f})\n',
+                  #f'Expected: {expected_sign} correlation', 
                   fontsize=12, fontweight='bold')
-    ax4.legend(loc='upper right', fontsize=9)
+    ax4.legend(loc='best', fontsize=9)
     ax4.grid(alpha=0.3, linestyle='--')
     ax4.set_xlim([0, 1])
-    
+
     # Overall title
     task_type = "Classification" if aggregator.is_classification else "Regression"
     fig.suptitle(f'Conformal Prediction Analysis - Global Summary ({task_type})\n({aggregator.total_chemicals:,} predictions across {len(aggregator.model_names)} models)', 
@@ -727,8 +779,24 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     plt.close()
 
 
-def plot_model_comparison(aggregator: ConformalAggregator, save_path: str, top_n: int = 10):
-    """Compare performance across models"""
+def plot_model_comparison(aggregator: ConformalAggregator, save_path: str,
+                          top_n: int = 10, top_n_violin: int = 5, 
+                          violins: bool = False):
+    """Compare performance across models
+    
+    Parameters
+    ----------
+    aggregator : ConformalAggregator
+        Aggregator containing model statistics
+    save_path : str
+        Path to save the figure
+    top_n : int, default=10
+        Number of top and bottom models to show in rankings
+    top_n_violin : int, default=5
+        Number of top models to show in distribution comparison
+    violins : bool, default=False
+        If True, use violin plots; if False, use boxplots
+    """
     
     metric_label = METRIC_LABEL
     
@@ -741,8 +809,14 @@ def plot_model_comparison(aggregator: ConformalAggregator, save_path: str, top_n
         total_count = sum(aggregator.model_adi[model_name].counts.values())
         model_stats.append((model_name, overall_mean, overall_std, total_count))
     
-    # Sort by mean metric
-    model_stats.sort(key=lambda x: x[1])
+    # Sort by mean metric (direction depends on task type)
+    # Regression: lower = better (ascending)
+    # Classification: higher = better (descending)
+    reverse_sort = aggregator.is_classification
+    model_stats.sort(key=lambda x: x[1], reverse=reverse_sort)
+    
+    # Direction-dependent labels
+    ranking_label = "Certainty" if aggregator.is_classification else "Uncertainty"
     
     # Select top and bottom models
     n_models = len(model_stats)
@@ -763,13 +837,14 @@ def plot_model_comparison(aggregator: ConformalAggregator, save_path: str, top_n
     stds = [s[2] for s in selected]
     
     y_pos = np.arange(len(models))
+    # Green for best (top), red for worst (bottom)
     colors = ['green' if i < top_n else 'red' for i in range(len(models))]
     
     ax1.barh(y_pos, means, xerr=stds, capsize=3, color=colors, alpha=0.6, edgecolor='black')
     ax1.set_yticks(y_pos)
     ax1.set_yticklabels(models, fontsize=8)
     ax1.set_xlabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
-    ax1.set_title(f'Model Ranking by Uncertainty {title_suffix}', fontsize=12, fontweight='bold')
+    ax1.set_title(f'Model Ranking by {ranking_label} {title_suffix}', fontsize=12, fontweight='bold')
     ax1.grid(axis='x', alpha=0.3, linestyle='--')
     ax1.invert_yaxis()
     
@@ -777,67 +852,124 @@ def plot_model_comparison(aggregator: ConformalAggregator, save_path: str, top_n
     for i, (mean, std) in enumerate(zip(means, stds)):
         ax1.text(mean + std + 0.1, i, f'{mean:.2f}', va='center', fontsize=8)
     
-    # Plot 2: Metric vs ADI for top models
+    # Plot 2: Metric vs ADI for top models (best performers)
     ax2 = fig.add_subplot(gs[1, 0])
-    for model_name in models[:5]:  # Top 5 most certain
+    for model_name in models[:5]:  # Top 5 best models
         mean_metric = aggregator.model_adi[model_name].get_mean_metric()
         metrics = [mean_metric[k] for k in ADI_LABELS]
         ax2.plot(ADI_LABELS, metrics, marker='o', label=model_name[:20], linewidth=2, alpha=0.7)
     
     ax2.set_xlabel('ADI Bin', fontsize=11, fontweight='bold')
     ax2.set_ylabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
-    ax2.set_title(f'Top 5 Models: {metric_label} vs ADI', fontsize=12, fontweight='bold')
-    ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+    ax2.set_title(f'Top 5 Best Models: {metric_label} vs ADI', fontsize=12, fontweight='bold')
+    ax2.legend(loc='best', fontsize=8)
     ax2.grid(alpha=0.3, linestyle='--')
     ax2.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
     
-    # Plot 3: Metric vs ADI for bottom models
+    # Plot 3: Metric vs ADI for bottom models (worst performers)
     ax3 = fig.add_subplot(gs[1, 1])
-    for model_name in models[-5:]:  # Bottom 5 most uncertain
+    for model_name in models[-5:]:  # Bottom 5 worst models
         mean_metric = aggregator.model_adi[model_name].get_mean_metric()
         metrics = [mean_metric[k] for k in ADI_LABELS]
         ax3.plot(ADI_LABELS, metrics, marker='o', label=model_name[:20], linewidth=2, alpha=0.7)
     
     ax3.set_xlabel('ADI Bin', fontsize=11, fontweight='bold')
     ax3.set_ylabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
-    ax3.set_title(f'Bottom 5 Models: {metric_label} vs ADI', fontsize=12, fontweight='bold')
+    ax3.set_title(f'Bottom 5 Worst Models: {metric_label} vs ADI', fontsize=12, fontweight='bold')
     ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
     ax3.grid(alpha=0.3, linestyle='--')
     ax3.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
     
-    # Plot 4: Violin plot comparison for selected models
+    # Plot 4: Distribution comparison (violins or boxplots)
     ax4 = fig.add_subplot(gs[2, :])
     
-    # Show violin plots for top 3 models across ADI bins
-    top_3_models = models[:3]
-    positions_base = np.arange(len(ADI_LABELS)) * 4
+    # Top N models for distribution comparison
+    top_n_models = models[:top_n_violin]
+    positions_base = np.arange(len(ADI_LABELS)) * (top_n_violin + 1)
     
-    for i, model_name in enumerate(top_3_models):
-        for j, label in enumerate(ADI_LABELS):
-            samples = aggregator.model_adi[model_name].get_all_values_approximation(label, n_samples=500)
-            if len(samples) > 10:
-                pos = positions_base[j] + i
-                parts = ax4.violinplot([samples], positions=[pos], widths=0.8,
-                                      showmeans=True, showmedians=False)
-                # Color code by model
-                color = plt.cm.Set3(i)
-                for pc in parts['bodies']:
-                    pc.set_facecolor(color)
-                    pc.set_alpha(0.7)
+    # Use different colormap based on number of models
+    if top_n_violin <= 10:
+        cmap = plt.cm.tab10
+    else:
+        cmap = plt.cm.tab20
     
+    if violins:
+        # Violin plots - use random sampling (set seed for reproducibility)
+        np.random.seed(42)
+        
+        for i, model_name in enumerate(top_n_models):
+            for j, label in enumerate(ADI_LABELS):
+                samples = aggregator.model_adi[model_name].get_all_values_approximation(label, n_samples=500)
+                
+                if len(samples) > 10:
+                    pos = positions_base[j] + i
+                    parts = ax4.violinplot([samples], positions=[pos], widths=0.8,
+                                          showmeans=True, showmedians=False)
+                    color = cmap(i)
+                    for pc in parts['bodies']:
+                        pc.set_facecolor(color)
+                        pc.set_alpha(0.7)
+    else:
+        # Boxplots - use pre-computed quantiles (deterministic, no sampling)
+        for i, model_name in enumerate(top_n_models):
+            for j, label in enumerate(ADI_LABELS):
+                # Get quantiles from t-digest (deterministic)
+                # Call quantile() separately for each value
+                q = [
+                    aggregator.model_adi[model_name].digests[label].quantile(0.0),    # min
+                    aggregator.model_adi[model_name].digests[label].quantile(0.25),   # Q1
+                    aggregator.model_adi[model_name].digests[label].quantile(0.5),    # median
+                    aggregator.model_adi[model_name].digests[label].quantile(0.75),   # Q3
+                    aggregator.model_adi[model_name].digests[label].quantile(1.0)     # max
+                ]
+                
+                if not any(np.isnan(q)):  # Check valid quantiles
+                    pos = positions_base[j] + i
+                    color = cmap(i)
+                    
+                    # Create boxplot from pre-computed statistics
+                    stats = [{
+                        'med': q[2],     # median
+                        'q1': q[1],      # Q1
+                        'q3': q[3],      # Q3
+                        'whislo': q[0],  # lower whisker (min)
+                        'whishi': q[4],  # upper whisker (max)
+                        'fliers': []     # no outliers
+                    }]
+                    
+                    bp = ax4.bxp(stats, positions=[pos], widths=0.7,
+                                patch_artist=True, showfliers=False,
+                                boxprops=dict(facecolor=color, alpha=0.7, edgecolor='black', linewidth=1),
+                                medianprops=dict(color='darkred', linewidth=2),
+                                whiskerprops=dict(color='black', linewidth=1),
+                                capprops=dict(color='black', linewidth=1))
+                    # Color the box (bxp returns dict with 'boxes' key)
+                    # Manually set box color
+                    bp['boxes'][0].set_facecolor(color)
+                    bp['boxes'][0].set_alpha(0.7)
+                    bp['boxes'][0].set_edgecolor('black')
+                    bp['boxes'][0].set_linewidth(1)           
+                    # Manually set median color
+                    bp['medians'][0].set_color(color)
+                    bp['medians'][0].set_linewidth(2)                        
+                    
     # Set up x-axis
-    ax4.set_xticks(positions_base + 1)
+    ax4.set_xticks(positions_base + (top_n_violin - 1) / 2)
     ax4.set_xticklabels(ADI_LABELS)
     ax4.set_xlabel('ADI Bin', fontsize=11, fontweight='bold')
     ax4.set_ylabel(metric_label, fontsize=11, fontweight='bold')
-    ax4.set_title('Distribution Comparison: Top 3 Models by ADI', fontsize=12, fontweight='bold')
+    plot_type = "Violin Plot" if violins else "Boxplot"
+    ax4.set_title(f'Distribution Comparison: Top {top_n_violin} Best Models by ADI ({plot_type})', 
+                  fontsize=12, fontweight='bold')
     ax4.grid(axis='y', alpha=0.3, linestyle='--')
     
     # Add legend
     from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor=plt.cm.Set3(i), alpha=0.7, label=top_3_models[i][:20]) 
-                      for i in range(len(top_3_models))]
-    ax4.legend(handles=legend_elements, loc='upper right', fontsize=9)
+    legend_elements = [Patch(facecolor=cmap(i), alpha=0.7, edgecolor='black', 
+                             label=top_n_models[i][:20]) 
+                      for i in range(len(top_n_models))]
+    ax4.legend(handles=legend_elements, bbox_to_anchor=(1.02, 0.5), 
+              loc='center left', fontsize=9, ncol=1)
     
     fig.suptitle(f'Model Comparison Analysis\n({len(aggregator.model_names)} models total)', 
                  fontsize=14, fontweight='bold', y=0.995)
@@ -845,7 +977,6 @@ def plot_model_comparison(aggregator: ConformalAggregator, save_path: str, top_n
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     logger.info(f"Model comparison saved to: {save_path}")
     plt.close()
-
 
 # -----------------------------
 # MAIN EXECUTION
@@ -888,7 +1019,7 @@ if __name__ == "__main__" or True:  # Works in both script and notebook mode
     print("\nGenerating outputs...")
     write_statistics(aggregator, base_path)
     plot_global_analysis(aggregator, f"{base_path}.png")
-    plot_model_comparison(aggregator, f"{base_path}_models.png", top_n=10)
+    plot_model_comparison(aggregator, f"{base_path}_models.png", top_n=10, violins=False)
     
     print("\n" + "="*60)
     print("Analysis complete!")
