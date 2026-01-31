@@ -83,7 +83,7 @@ else:
             classvalues_dict = get_class_values(vega_models, data)
             df, exp_numeric = replace_labels_with_keys(df, "Experimental", classvalues_dict)            
             df, label_pred = clean_classdataset(df, main_column, classvalues_dict)
-            result_df, metrics_per_model = predict_conformal_classifier_chunked(
+            result_df, metrics_per_model, sigma_model = predict_conformal_classifier_chunked(
                 df, pred_column=label_pred,
                 true_column=exp_numeric,
                 model_path=_ncmodel_path,

@@ -6,7 +6,9 @@ import matplotlib.pyplot as plt
 from IPython.display import display, Markdown, HTML
 from scipy import stats
 from tasks.mapie_diagnostic import (
-    plot_coverage_efficiency_classification
+    plot_coverage_efficiency_classification,
+    figure_spearman_classification,
+    distance_by_adi_bins_classification
 )
 
 
@@ -19,6 +21,12 @@ data = ["BCF_MEYLAN"]
 ncm = "crfecfp"
 # -
 
+
+#SCORE = "predicted0distance"
+#SCORE_LABEL = f"Predicted {ncm} Distance"
+
+SCORE = "probs_distance"
+SCORE_LABEL = "Prediction Confidence"
 
 df_models = pd.read_excel(vega_models, engine="openpyxl")
 logger = init_logging(Path(product["nb"]).parent / "logs", "plots.log")
@@ -462,26 +470,33 @@ def print_classification_summary(combined_df):
 combined_rows = []
 for key_star in upstream:
     for key in upstream[key_star]:
+        # we only process the specified ncm here
+        if key.split("_")[-1] != ncm:
+            continue
         _data = key.replace("mapiecproba_", "").replace("mapiec_", "").replace(f"_{ncm}", "")
+        #if _data in ["DEVTOX_PG"]:
+        #    continue
         file_path = upstream[key_star][key]["data"]
         # Load classification results
         try:
             df_test = pd.read_excel(file_path, sheet_name="Prediction Intervals")
             if f'{_data}_true' in df_test.columns:
                 df_test['correct'] = (df_test[f'{_data}_pred'] == df_test[f'{_data}_true'])
+
             df_test['data'] = _data
             df_test['split'] = 'Test'
-            if f'{_data}_predicted_distance' in df_test.columns:
-                df_test = df_test.rename(columns={f'{_data}_predicted_distance': 'predicted_distance'})
-            combined_rows.append(df_test)
+            if f'{_data}_probs_distance' in df_test.columns:
+                df_test = df_test.rename(columns={f'{_data}_probs_distance': SCORE})
+            #combined_rows.append(df_test)
         except Exception:
             pass
         try:
             df_train = pd.read_excel(file_path, sheet_name="Training PI")
             if f'{_data}_true' in df_train.columns:
                 df_train['correct'] = (df_train[f'{_data}_pred'] == df_train[f'{_data}_true'])
-            if f'{_data}_predicted_distance' in df_train.columns:
-                df_train = df_train.rename(columns={f'{_data}_predicted_distance': 'predicted_distance'})                
+
+            if f'{_data}_probs_distance' in df_train.columns:
+                df_train = df_train.rename(columns={f'{_data}_probs_distance': SCORE})                
             df_train['data'] = _data
             df_train['split'] = 'Training'        
             combined_rows.append(df_train)
@@ -490,25 +505,111 @@ for key_star in upstream:
 
 combined_df = pd.concat(combined_rows, ignore_index=True)
 
-# Print summary
-print_classification_summary(combined_df)
+# ========== NEW: SPEARMAN CORRELATION ANALYSIS (NO SPLITS) ==========
 
-# Visualizations
+# Check if prediction distance column exists
+if SCORE in combined_df.columns:
+    # Global correlation (all data pooled)
+    rho, p = stats.spearmanr(
+        combined_df["ADI"],
+        combined_df[SCORE]
+    )
+    print(f"\nGlobal Spearman ρ (ADI vs {SCORE_LABEL}) = {rho:.3f}, p = {p:.2e}")
+
+    # Hexbin plot for all data
+    plt.figure(figsize=(6,5))
+    plt.hexbin(
+        combined_df["ADI"],
+        combined_df[SCORE],
+        gridsize=40,
+        mincnt=1,
+        cmap='YlOrRd'
+    )
+    plt.xlabel("ADI", fontsize=12)
+    plt.ylabel("Score", fontsize=12)
+    plt.title("All datasets pooled", fontsize=13)
+    plt.colorbar(label="Count")
+    plt.tight_layout()
+    plt.show()
+
+    # Per-dataset correlation analysis (NO SPLIT GROUPING)
+    rows = []
+    for name in combined_df['data'].unique():
+        g = combined_df[combined_df['data'] == name]
+        if len(g) > 10:
+            r, p = stats.spearmanr(g["ADI"], g[SCORE])
+            rows.append({
+                "data": name,
+                "rho": r,
+                "p": p,
+                "n": len(g)
+            })
+    
+    corr_df = pd.DataFrame(rows).sort_values("rho")
+    display(corr_df)
+
+    # Interpretation note
+    print("Interpretation:")
+    print(f"Spearman ρ measures monotonic relationship between ADI and {SCORE_LABEL}.")
+    print("For classification:")
+    print(f"  - Positive ρ: Higher ADI → Higher {SCORE_LABEL}")
+    print(f"  - Negative ρ: Higher ADI → Lower {SCORE_LABEL}")
+    print("  - ρ ≈ 0: No clear monotonic relationship")
+
+    # Small multiples (4 most extreme correlations)
+    print("\nShowing 4 datasets with strongest correlations:")
+    for name in corr_df.sort_values("rho", key=abs).tail(4)["data"]:
+        g = combined_df[combined_df["data"]==name]
+        plt.figure(figsize=(3,3))
+        plt.scatter(g["ADI"], g[SCORE], s=8, alpha=0.4)
+        plt.title(name, fontsize=10)
+        plt.xlabel("ADI", fontsize=9)
+        plt.ylabel(SCORE_LABEL, fontsize=9)
+        plt.tight_layout()
+        plt.show()
+
+    # Save correlation results
+    corr_df.to_excel(product["data"], index=False)
+
+    # Generate Spearman figure (matching regression style)
+    figure_spearman_classification(
+        corr_df, 
+        score_col_label=SCORE_LABEL,
+        save_path=product["plot"]
+    )
+    # Generate ADI bins analysis (matching regression style)
+    distance_by_adi_bins_classification(
+        combined_df,
+        distance_col=SCORE, 
+        distance_label=SCORE_LABEL,
+        save_path=product["plot"].replace("spearman", "adi_bins_distance")
+    )
+else:
+    print(f"\nWarning: {SCORE} column not found. Skipping correlation analysis.")
+
+# ========== EXISTING VISUALIZATIONS (KEEP AS IS) ==========
+
+# Original coverage by ADI bins
 HTML("<h3>Coverage and Uncertainty Stratified by Applicability Domain (ADI)</h3>") 
-HTML("<p>Empirical coverage rate, prediction set size, and certainty as a function of applicability domain index (ADI). (A) Coverage rate by ADI bin with 95% confidence intervals; dashed line indicates target coverage (1–α = 0.90). (B) Distribution of prediction set sizes across ADI bins. (C) Fraction of singleton prediction sets by ADI bin. (D) Mean prediction set size by ADI bin with 95% confidence intervals. Coverage remains approximately constant across domain strata, while efficiency improves with increasing ADI.</p>")
-coverage_by_adi_bins_classification(combined_df, alpha=0.1, save_path=product["plot"])
+HTML("<p>Empirical coverage rate, prediction set size, and certainty as a function of applicability domain index (ADI).</p>")
+coverage_by_adi_bins_classification(combined_df, 
+                                    alpha=0.1, save_path=product["plot"].replace("spearman","coverage_by_adi_bins"))
 
+# Coverage efficiency plot (UNCHANGED)
+print(combined_df[SCORE].dtype)
+print(combined_df[SCORE].head())
 
-df_metrics = compare_datasets_coverage(combined_df, save_path=product["plot"].replace('coverage_analysis.png','dataset_comparison.png'))
-df_metrics.to_excel(product["data"], index=False)
-HTML("Figure 3 — Domain Effect on Coverage Across Datasets and Splits")
-HTML("Difference between high-ADI and low-ADI coverage (Δ = Coverage_high − Coverage_low) computed separately for each dataset and split. Positive values indicate improved coverage in high-domain regions.")
-
-# Generate Figure 2 for classification
 dataset_stats = plot_coverage_efficiency_classification(
     combined_df,
-    distance_col="predicted_distance",
+    distance_col=SCORE,
+    distance_label=SCORE_LABEL,
     save_path=product["plot"].replace("spearman", "coverage_efficiency"),
     max_labels_panel_a=15,
     annotate_top_n=3
+)
+
+# Export
+dataset_stats.to_excel(
+    product["data"].replace(".xlsx", "_performance.xlsx"),
+    index=False
 )

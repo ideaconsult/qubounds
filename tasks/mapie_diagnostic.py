@@ -277,9 +277,10 @@ def make_sigma_model(ncm):
             objective="huber",
             #early_stopping_rounds=50
         )            
-    elif ncm == "clgbmecfp":    
-        return LGBMClassifier(
-            objective="huber"
+    elif ncm == "clgbmecfp":
+        return ShapeSafeLGBMClassifier(
+            objective="multiclass",
+            random_state=42
         )        
     elif ncm == "rnrecfp":
         return RadiusNeighborsRegressor(
@@ -761,6 +762,8 @@ def plot_prediction_set_sizes(
 def plot_ncm_diagnostics(
     distances_actual,
     distances_predicted,
+    probs_train,
+    probs_cal,
     title="NCM Model: Predicted vs Actual Distances"
 ):
     """
@@ -793,14 +796,17 @@ def plot_ncm_diagnostics(
     axes[0].grid(True, alpha=0.3)
     
     # Residual plot (actual - predicted)
-    residuals = distances_actual - distances_predicted
-    axes[1].scatter(distances_predicted, residuals, alpha=0.3, s=10)
-    axes[1].axhline(0, color='r', linestyle='--', linewidth=2)
-    axes[1].set_xlabel(r"Predicted distance $\hat{\sigma}(x)$")
-    axes[1].set_ylabel(r"Residual (actual - predicted)")
-    axes[1].set_title("NCM Residuals")
+    #residuals = distances_actual - distances_predicted
+    if probs_train is not None:
+        axes[1].hist(probs_train, bins="auto", label="Training")
+
+    if probs_cal is not None:
+        axes[1].hist(probs_cal, bins="auto", label="Calibration")
+    axes[1].set_xlabel("Distance to class probability")
+    axes[1].set_ylabel("Count")
+    axes[1].set_title(title)
+    axes[1].legend()
     axes[1].grid(True, alpha=0.3)
-    
     plt.tight_layout()
     return fig
 
@@ -1389,8 +1395,10 @@ def plot_coverage_efficiency_analysis(combined_df, save_path=None,
     return dataset_stats
 
 
-def plot_coverage_efficiency_classification(combined_df, distance_col, save_path=None,
-                                           max_labels_panel_a=20, annotate_top_n=3
+def plot_coverage_efficiency_classification(
+        combined_df, distance_col, distance_label=None, 
+        dataset_label="Model",
+        save_path=None, max_labels_panel_a=20, annotate_top_n=3
                                            ):
     """
     Four-panel coverage and efficiency analysis for classification.
@@ -1404,6 +1412,8 @@ def plot_coverage_efficiency_classification(combined_df, distance_col, save_path
         annotate_top_n: Number to annotate in Panel D
     """
     
+    if distance_label is None:
+        distance_label = distance_col
     # Calculate per-dataset statistics (aggregating all data together)
     dataset_stats = combined_df.groupby('data').agg({
         'In_Coverage': ['mean', 'count'],
@@ -1418,7 +1428,6 @@ def plot_coverage_efficiency_classification(combined_df, distance_col, save_path
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
     # ========== PANEL A: Coverage by Dataset ==========
-    # ========== PANEL A: Coverage by Dataset (CLEANER VERSION) ==========
     colors_coverage = [
         '#2E7D32' if 0.85 <= cov <= 0.95 else
         '#FFA726' if 0.80 <= cov < 0.85 or 0.95 < cov <= 1.0 else
@@ -1436,7 +1445,7 @@ def plot_coverage_efficiency_classification(combined_df, distance_col, save_path
                     label='Acceptable')
 
     axes[0, 0].set_xlabel('Coverage Rate', fontsize=12, fontweight='bold')
-    axes[0, 0].set_title('A. Coverage by Endpoint (Sorted)', 
+    axes[0, 0].set_title(f'A. Coverage by {dataset_label} (Sorted)', 
                         fontsize=13, fontweight='bold')
     axes[0, 0].set_xlim(0.7, 1.02)
     axes[0, 0].legend(fontsize=9, loc='lower right')
@@ -1444,7 +1453,7 @@ def plot_coverage_efficiency_classification(combined_df, distance_col, save_path
 
     if len(dataset_stats) > 20:
         axes[0, 0].set_yticks([])
-        axes[0, 0].set_ylabel(f'Endpoints (n={len(dataset_stats)}, sorted by coverage)', 
+        axes[0, 0].set_ylabel(f'{dataset_label} (n={len(dataset_stats)}, sorted by coverage)', 
                             fontsize=11, fontweight='bold')
     else:
         # Only if 20 or fewer, show all labels
@@ -1500,12 +1509,13 @@ def plot_coverage_efficiency_classification(combined_df, distance_col, save_path
                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     
     # ========== PANEL C: Prediction Distance Distribution ==========
+#    try:
     # Boxplots of distance by dataset
     data_for_box = [combined_df[combined_df['data'] == d][distance_col].values
                     for d in dataset_stats['data']]
     
     bp = axes[1, 0].boxplot(data_for_box, patch_artist=True,
-                           showfliers=False, vert=False)
+                        showfliers=False, vert=False)
     
     for patch in bp['boxes']:
         patch.set_facecolor('#2196F3')
@@ -1516,24 +1526,25 @@ def plot_coverage_efficiency_classification(combined_df, distance_col, save_path
         axes[1, 0].set_yticks(range(1, len(dataset_stats) + 1))
         axes[1, 0].set_yticklabels(dataset_stats['data'], fontsize=7)
     else:
-        axes[1, 0].set_ylabel('Endpoints (sorted by coverage)',
-                             fontsize=12, fontweight='bold')
+        axes[1, 0].set_ylabel(f'{dataset_label} (sorted by coverage)',
+                            fontsize=12, fontweight='bold')
         axes[1, 0].set_yticks([])
     
-    axes[1, 0].set_xlabel('Prediction Distance', fontsize=12, fontweight='bold')
-    axes[1, 0].set_title('C. Prediction Distance by Endpoint',
+    axes[1, 0].set_xlabel(distance_label, fontsize=12, fontweight='bold')
+    axes[1, 0].set_title(f'C. {distance_label} by {dataset_label}',
                         fontsize=13, fontweight='bold')
     axes[1, 0].grid(True, alpha=0.3, axis='x')
     
     # Add statistics
     axes[1, 0].text(0.98, 0.98,
-                   f'Overall:\n'
-                   f'Mean: {combined_df[distance_col].mean():.3f}\n'
-                   f'Median: {combined_df[distance_col].median():.3f}',
-                   transform=axes[1, 0].transAxes, fontsize=9,
-                   verticalalignment='top', horizontalalignment='right',
-                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
-    
+                f'Overall:\n'
+                f'Mean: {combined_df[distance_col].mean():.3f}\n'
+                f'Median: {combined_df[distance_col].median():.3f}',
+                transform=axes[1, 0].transAxes, fontsize=9,
+                verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
+#    except Exception as x:
+#        print(x)
     # ========== PANEL D: Coverage-Certainty Tradeoff ==========
     # Lower distance = more certain (better)
     # High coverage + low distance = ideal (top-left)
@@ -1550,13 +1561,13 @@ def plot_coverage_efficiency_classification(combined_df, distance_col, save_path
                       alpha=0.5, label='Target coverage')
     median_dist = dataset_stats['mean_distance'].median()
     axes[1, 1].axvline(x=median_dist, color='blue', linestyle='--',
-                      linewidth=1.5, alpha=0.5, label='Median distance')
+                      linewidth=1.5, alpha=0.5, label=f'Median {distance_label}')
     
     # Ideal region: high coverage + low distance
     axes[1, 1].fill_between([0, median_dist], 0.9, 1.02,
                            alpha=0.1, color='green', label='Ideal region')
     
-    axes[1, 1].set_xlabel('Mean Prediction Distance (Uncertainty)',
+    axes[1, 1].set_xlabel(f'Mean {distance_label}',
                          fontsize=12, fontweight='bold')
     axes[1, 1].set_ylabel('Coverage Rate (Validity)',
                          fontsize=12, fontweight='bold')
@@ -1627,24 +1638,184 @@ def plot_coverage_efficiency_classification(combined_df, distance_col, save_path
     print(f"  Range: [{dataset_stats['coverage'].min():.3f}, {dataset_stats['coverage'].max():.3f}]")
     print(f"  Within target (0.85-0.95): {n_good}/{len(dataset_stats)} ({n_good/len(dataset_stats)*100:.1f}%)")
     
-    print(f"\nPrediction Distance (Uncertainty):")
+    print(f"\n{distance_label}:")
     print(f"  Mean: {dataset_stats['mean_distance'].mean():.3f}")
     print(f"  Median: {dataset_stats['mean_distance'].median():.3f}")
     print(f"  Range: [{dataset_stats['mean_distance'].min():.3f}, {dataset_stats['mean_distance'].max():.3f}]")
     
     rho_dist_cov = spearmanr(dataset_stats['mean_distance'], dataset_stats['coverage'])
     print(f"\nCorrelation Tests:")
-    print(f"  Distance vs Coverage: ρ = {rho_dist_cov[0]:.3f}, p = {rho_dist_cov[1]:.3f}")
-    print(f"  Dataset size vs Coverage: ρ = {rho_size:.3f}, p = {p_size:.3f}")
+    print(f"  {distance_label} vs Coverage: ρ = {rho_dist_cov[0]:.3f}, p = {rho_dist_cov[1]:.3f}")
+    print(f"  {distance_label} size vs Coverage: ρ = {rho_size:.3f}, p = {p_size:.3f}")
     
     print(f"\nBest Performers (high coverage, low distance):")
     for _, row in best.iterrows():
-        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, distance={row['mean_distance']:.3f}")
+        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, {distance_label}={row['mean_distance']:.3f}")
     
     print(f"\nWorst Performers:")
     for _, row in worst.iterrows():
-        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, distance={row['mean_distance']:.3f}")
+        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, {distance_label}={row['mean_distance']:.3f}")
     
     print("="*70)
     
     return dataset_stats
+
+
+def figure_spearman_classification(df, score_col_label="Score", save_path=None):
+    """
+    Spearman correlation analysis for classification: ADI vs score.
+    Mirrors the regression version but uses prediction distance instead of interval width.
+    
+    Args:
+        df: DataFrame with correlation results per dataset
+
+        save_path: Path to save figure
+    """
+    # Sort by correlation strength
+    df_sorted = df.sort_values('rho').reset_index(drop=True)
+
+    # Assign colors based on p-value significance
+    colors = []
+    for p in df_sorted['p']:
+        if p < 0.001:
+            colors.append('#2E7D32')  # Dark green - highly significant
+        elif p < 0.05:
+            colors.append('#FFA726')  # Orange - significant
+        else:
+            colors.append('#D32F2F')  # Red - not significant
+
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 14))
+
+    # === PLOT 1: Correlation bars ===
+    y_pos = np.arange(len(df_sorted))
+    ax1.barh(y_pos, df_sorted['rho'], color=colors, alpha=0.8, 
+            edgecolor='black', linewidth=0.5)
+    ax1.axvline(x=0, color='black', linestyle='-', linewidth=1.5)
+    ax1.set_yticks(y_pos)
+    ax1.set_yticklabels(df_sorted['data'], fontsize=9)
+    ax1.set_xlabel('Spearman ρ', fontsize=12)
+    ax1.set_title(f'ADI vs {score_col_label} Correlation\n(Sorted by Strength)', 
+                fontsize=12, pad=10)
+    ax1.grid(axis='x', alpha=0.3, linestyle='--')
+    # Note: For classification, positive correlation might be expected
+    # (higher ADI → higher distance → more certain/singleton predictions)
+
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='#2E7D32', label='p < 0.001'),
+        Patch(facecolor='#FFA726', label='p < 0.05'),
+        Patch(facecolor='#D32F2F', label='p ≥ 0.05')
+    ]
+    ax1.legend(handles=legend_elements, loc='best', fontsize=10)
+
+    # === PLOT 2: Scatter plot with dataset size ===
+    ax2.scatter(df_sorted['rho'], df_sorted['n'], c=colors, s=100, 
+                alpha=0.7, edgecolor='black', linewidth=1)
+    ax2.axvline(x=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+    ax2.set_xlabel('Spearman ρ', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Dataset Size (n)', fontsize=12, fontweight='bold')
+    ax2.set_title('Correlation Strength vs Dataset Size', 
+                fontsize=12, pad=10)
+    ax2.grid(True, alpha=0.3, linestyle='--')
+    ax2.set_yscale('log')
+
+    # Annotate top 3 largest datasets
+    top_n = df_sorted.nlargest(3, 'n')
+    for _, row in top_n.iterrows():
+        ax2.annotate(row['data'], 
+                    xy=(row['rho'], row['n']), 
+                    xytext=(10, 10), 
+                    textcoords='offset points',
+                    fontsize=8, 
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.5),
+                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
+
+    ax2.legend(handles=legend_elements, loc='best', fontsize=10)
+
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # Print summary statistics
+    print("\n=== Summary Statistics ===")
+    print(f"Mean ρ: {df['rho'].mean():.3f}")
+    print(f"Median ρ: {df['rho'].median():.3f}")
+    print(f"Range: [{df['rho'].min():.3f}, {df['rho'].max():.3f}]")
+    print(f"\nSignificant correlations (p < 0.05): {(df['p'] < 0.05).sum()}/{len(df)}")
+    print(f"Highly significant (p < 0.001): {(df['p'] < 0.001).sum()}/{len(df)}")
+    print(f"\nNegative correlations: {(df['rho'] < 0).sum()}/{len(df)}")
+    print(f"Positive correlations: {(df['rho'] > 0).sum()}/{len(df)}")
+    print(f"\nDataset size range: {df['n'].min()} to {df['n'].max()}")
+    print(f"Median dataset size: {df['n'].median():.0f}")
+
+    # Check if dataset size correlates with correlation strength
+    size_rho_corr = df['n'].corr(df['rho'], method='spearman')
+    print(f"\nCorrelation between dataset size and ρ: {size_rho_corr:.3f}")
+    print("(Does larger n lead to stronger/weaker correlations?)")
+
+
+def distance_by_adi_bins_classification(
+        df, distance_col='ncm_score', distance_label="Score", save_path=None):
+    """
+    Analyze prediction distance and coverage by ADI bins for classification.
+    Mirrors the regression coverage_by_adi_bins but uses distance instead of interval width.
+    
+    Args:
+        df: DataFrame with columns ['ADI', 'In_Coverage', distance_col]
+        distance_col: Name of prediction distance column
+        save_path: Path to save figure
+    """
+    # Bin ADI into groups
+    df['ADI_bin'] = pd.cut(df['ADI'], bins=[0, 0.5, 0.75, 0.85, 1.0], 
+                        labels=['Very Low\n(0-0.5)', 'Low\n(0.5-0.75)', 
+                                'Moderate\n(0.75-0.85)', 'High\n(0.85-1.0)'])
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    # === PLOT 1: Coverage rate by ADI bin ===
+    coverage_by_adi = df.groupby('ADI_bin')['In_Coverage'].agg(['mean', 'count'])
+    coverage_by_adi['mean'].plot(kind='bar', ax=ax1, color='#2E7D32', alpha=0.7, edgecolor='black')
+    ax1.set_ylabel('Coverage Rate', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('ADI Range', fontsize=12, fontweight='bold')
+    ax1.set_title('Coverage Rate by Applicability Domain', fontsize=14, fontweight='bold')
+    ax1.set_ylim(0, 1.05)
+    ax1.axhline(y=0.9, color='red', linestyle='--', linewidth=2, label='Target 90%')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3, axis='y')
+
+    # Add sample sizes on bars
+    for i, (idx, row) in enumerate(coverage_by_adi.iterrows()):
+        ax1.text(i, row['mean'] + 0.02, f"n={row['count']}", 
+                ha='center', fontsize=9, fontweight='bold')
+
+    # === PLOT 2: Prediction distance by ADI bin ===
+    df.boxplot(column=distance_col, by='ADI_bin', ax=ax2, patch_artist=True)
+    ax2.set_ylabel(distance_label, fontsize=12, fontweight='bold')
+    ax2.set_xlabel('ADI Range', fontsize=12, fontweight='bold')
+    ax2.set_title(f'{distance_label} by Applicability Domain', fontsize=14, fontweight='bold')
+    ax2.get_figure().suptitle('')  # Remove auto-title from boxplot
+    plt.setp(ax2.xaxis.get_majorticklabels(), rotation=0)
+
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # Print statistics
+    print("\n=== Coverage by ADI Bin ===")
+    print(coverage_by_adi)
+    print(f"\nOverall coverage: {df['In_Coverage'].mean():.1%}")
+    print(f"Mean {distance_label}: {df[distance_col].mean():.3f}")
+    
+
+class ShapeSafeLGBMClassifier(LGBMClassifier):
+    def predict_proba(self, X, *args, **kwargs):
+        probas = super().predict_proba(X, *args, **kwargs)
+        # LightGBM occasionally returns (n,) for binary; 
+        # Scikit-learn expects (n, 2)
+        if probas.ndim == 1:
+            return np.vstack([1 - probas, probas]).T
+        return probas    
