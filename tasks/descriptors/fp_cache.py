@@ -112,10 +112,10 @@ class FingerprintCache:
         )
         """)
         self.cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fp_cache_compound_id ON fp_cache(compound_id)"
+            "CREATE INDEX IF NOT EXISTS idx_fp_cache_compound_id ON fp_id_cache(compound_id)"
         )
         self.cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_fp_cache_inchi ON fp_cache(inchi)"
+            "CREATE INDEX IF NOT EXISTS idx_fp_cache_inchi ON fp_id_cache(inchi)"
         )
         self.conn.commit()
 

@@ -1406,7 +1406,7 @@ def plot_coverage_efficiency_classification(
     
     Args:
         combined_df: DataFrame with ['data', 'In_Coverage', 'ADI', distance_col]
-        distance_col: Name of prediction distance column (e.g., 'ALGAE_COMBASECLASS_predicted_distance')
+        distance_col: Name of prediction distance column (e.g., 'ALGAE_COMBASECLASS_probs_distance')
         save_path: Path to save figure
         max_labels_panel_a: Maximum labels in Panel A
         annotate_top_n: Number to annotate in Panel D
@@ -1545,43 +1545,57 @@ def plot_coverage_efficiency_classification(
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
 #    except Exception as x:
 #        print(x)
-    # ========== PANEL D: Coverage-Certainty Tradeoff ==========
-    # Lower distance = more certain (better)
-    # High coverage + low distance = ideal (top-left)
+# ========== PANEL D: Coverage-Certainty Tradeoff (REVISED) ==========
+    # Higher Confidence = more certain (better)
+    # Target: High coverage (Validity) + High Confidence = Top-Right
     
     sizes = np.sqrt(dataset_stats['n']) * 2
     
-    scatter = axes[1, 1].scatter(dataset_stats['mean_distance'],
+    scatter = axes[1, 1].scatter(dataset_stats['mean_distance'], # Changed from distance
                                 dataset_stats['coverage'],
                                 s=sizes, alpha=0.6, c=colors_coverage,
                                 edgecolor='black', linewidth=0.5)
     
     # Reference lines
     axes[1, 1].axhline(y=0.9, color='red', linestyle='--', linewidth=1.5,
-                      alpha=0.5, label='Target coverage')
-    median_dist = dataset_stats['mean_distance'].median()
-    axes[1, 1].axvline(x=median_dist, color='blue', linestyle='--',
-                      linewidth=1.5, alpha=0.5, label=f'Median {distance_label}')
+                      alpha=0.5, label='Target coverage (90%)')
     
-    # Ideal region: high coverage + low distance
-    axes[1, 1].fill_between([0, median_dist], 0.9, 1.02,
+    median_conf = dataset_stats['mean_distance'].median()
+    axes[1, 1].axvline(x=median_conf, color='blue', linestyle='--',
+                      linewidth=1.5, alpha=0.5, label=f'Median Confidence')
+    
+    # Ideal region: high coverage + high confidence (Top-Right)
+    # x-range: from median/high threshold to 1.0
+    axes[1, 1].fill_between([0.8, 1.0], 0.85, .95, # High-confidence zone
                            alpha=0.1, color='green', label='Ideal region')
     
-    axes[1, 1].set_xlabel(f'Mean {distance_label}',
+    axes[1, 1].set_xlabel('Mean Prediction Confidence',
                          fontsize=12, fontweight='bold')
     axes[1, 1].set_ylabel('Coverage Rate (Validity)',
                          fontsize=12, fontweight='bold')
     axes[1, 1].set_title('D. Coverage-Certainty Tradeoff',
                         fontsize=13, fontweight='bold')
     axes[1, 1].set_ylim(0.7, 1.02)
-    axes[1, 1].legend(fontsize=9, loc='lower right')
+    axes[1, 1].set_xlim(0.6, 1.02) # Focused on the confidence range
     axes[1, 1].grid(True, alpha=0.3)
     
     # Annotate best/worst
-    # Best = high coverage + low distance
-    dataset_stats['score'] = dataset_stats['coverage'] / (dataset_stats['mean_distance'] + 0.01)
-    best = dataset_stats.nlargest(annotate_top_n, 'score')
-    worst = dataset_stats.nsmallest(annotate_top_n, 'score')
+    # Best = High coverage AND High confidence
+    #dataset_stats['score'] = dataset_stats['coverage'] * dataset_stats['mean_distance']
+    #best = dataset_stats.nlargest(annotate_top_n, 'score')
+    #worst = dataset_stats.nsmallest(annotate_top_n, 'score')
+    in_validity_zone = dataset_stats['coverage'].between(0.85, 0.95)
+    in_efficiency_zone = dataset_stats['mean_distance'] >= 0.80
+
+    # 2. Identify "Best" (Top-Right of the defined box)
+    # We prioritize models that satisfy both, then rank by highest confidence
+    dataset_stats['is_ideal'] = in_validity_zone & in_efficiency_zone
+    best = dataset_stats[dataset_stats['is_ideal']].nlargest(annotate_top_n, 'mean_distance')
+
+    # 3. Identify "Worst" (The Outliers)
+    # We define worst as models that fail the validity floor (< 0.85) 
+    # or fall significantly below the efficiency threshold (< 0.80)
+    worst = dataset_stats[~dataset_stats['is_ideal']].nsmallest(annotate_top_n, 'coverage')
     
     for i, (_, row) in enumerate(best.iterrows()):
         offset_y = 15 + i * 15

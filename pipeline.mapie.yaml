@@ -46,9 +46,9 @@ tasks:
     name: "mapieplot_classlac_[[ncm]]"
     upstream: ["mapiec_*"]    
     product: 
-      nb: "products/mapie/vega/classification/[[ncm]]/mapie_plot.ipynb"
-      data: "products/mapie/vega/classification/[[ncm]]/spearman.xlsx"
-      plot: "products/mapie/vega/classification/[[ncm]]/spearman.png"
+      nb: "products/mapie/vega/class_lac/[[ncm]]/mapie_plot.ipynb"
+      data: "products/mapie/vega/class_lac/[[ncm]]/spearman.xlsx"
+      plot: "products/mapie/vega/class_lac/[[ncm]]/spearman.png"
     params:
       input_folder: "products/vega/class_lac"
       vega_models: "resources/vega_models_withclasses.xlsx"        
@@ -56,8 +56,8 @@ tasks:
       data: "{{vega_class}}"
       data_: ["BCF_MEYLAN"]
     grid:
-      #ncm: ["rfecfp","knnecfp", "gbecfp"]
-      ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
+      ncm: ["crfecfp"]
+      #ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
 
 
   - source: tasks/mapie_plot_class.py
@@ -90,11 +90,12 @@ tasks:
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: True
+      skip_existing: False
       vega_models: "resources/vega_models_withclasses.xlsx"
       method_score: "LAC"      
     grid:
-      ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
+      #ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
+      ncm: ["crfecfp"]
       # "crfecfp", "cknn2jecfp","rfecfp",, "knn2jecfp"]  
       #data: ["ALGAE_COMBASECLASS", "AROM_IRMFN", "AROM_TOX21", "BEE_KNN", "CARC_ANTARES"]
       data: "{{vega_class}}"
@@ -153,7 +154,7 @@ tasks:
 
   - source: tasks/mapie_class_analysis.py
     name: "mapieanalysis_class"
-    upstream: ["classification_summary_mapie", "classproba_summary_mapie"]
+    upstream: ["classification_summary_mapie"]
     product: 
       nb: "products/mapie/vega/classification/mapie_class_analysis.ipynb"
       data: "products/mapie/vega/classification"
@@ -260,3 +261,64 @@ tasks:
       input_key: "{{input_key}}"
 
 
+  - source: tasks/make_archive.py
+    name: "make_archive_vega"
+    upstream: []    
+    product: 
+      nb: "products/make_archive_vega.ipynb"
+      zip: "{{VEGA_CP_OUTPUT}}/vega_datasets.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      #folders_to_scan: ["{{VEGA_CP_OUTPUT}}", "{{VEGA_CP_OUTPUT}}"]
+      folders_to_scan: [
+                    "products/vega/classification", "products/vega/regression"]
+      #, "products/mapie/vega/regression/rlgbmecfp"]
+      extensions_to_include: [".xlsx"]
+      recursive: True
+
+
+  - source: tasks/make_archive.py
+    name: "make_archive_mapie"
+    upstream: []    
+    product: 
+      nb: "products/make_archive_mapie.ipynb"
+      zip: "{{VEGA_CP_OUTPUT}}/vega_mapie_conformal.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      #folders_to_scan: ["{{VEGA_CP_OUTPUT}}", "{{VEGA_CP_OUTPUT}}"]
+      folders_to_scan: ["products/mapie/vega/regression/rlgbmecfp", 
+                    "products/mapie/vega/class_lac/crfecfp"]
+      #, "products/mapie/vega/regression/rlgbmecfp"]
+      extensions_to_include: [".xlsx"]
+      recursive: True
+
+
+  - source: tasks/make_archive.py
+    name: "make_archive_comptox_class_hard"
+    upstream: []    
+    product: 
+      nb: "products/make_archive_comptox.ipynb"
+      zip: "{{VEGA_CP_OUTPUT}}/vega_comptox_conformal_class_hard.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      #folders_to_scan: ["{{VEGA_CP_OUTPUT}}", "{{VEGA_CP_OUTPUT}}"]
+      folders_to_scan: [
+                    "{{VEGA_CP_OUTPUT}}/comptox/class_lac"]
+      #, "products/mapie/vega/regression/rlgbmecfp"]
+      extensions_to_include: [".xlsx"]
+      recursive: True
+
+  - source: tasks/make_archive.py
+    name: "make_archive_comptox_regr"
+    upstream: []    
+    product: 
+      nb: "products/make_archive_comptox_regr.ipynb"
+      zip: "{{VEGA_CP_OUTPUT}}/vega_comptox_conformal_regression.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      #folders_to_scan: ["{{VEGA_CP_OUTPUT}}", "{{VEGA_CP_OUTPUT}}"]
+      folders_to_scan: ["{{VEGA_CP_OUTPUT}}/comptox/regression", 
+                    ]
+      #, "products/mapie/vega/regression/rlgbmecfp"]
+      extensions_to_include: [".xlsx"]
+      recursive: True

@@ -474,8 +474,8 @@ for key_star in upstream:
         if key.split("_")[-1] != ncm:
             continue
         _data = key.replace("mapiecproba_", "").replace("mapiec_", "").replace(f"_{ncm}", "")
-        #if _data in ["DEVTOX_PG"]:
-        #    continue
+        if _data in ["DEVTOX_PG"]:
+            continue
         file_path = upstream[key_star][key]["data"]
         # Load classification results
         try:
@@ -608,8 +608,12 @@ dataset_stats = plot_coverage_efficiency_classification(
     annotate_top_n=3
 )
 
+dataset_stats.rename(columns={"mean_distance": f"mean_{SCORE}",
+                              "median_distance": f"median_{SCORE}",
+                              "std_distance": f"std_{SCORE}"}
+                              )
 # Export
 dataset_stats.to_excel(
-    product["data"].replace(".xlsx", "_performance.xlsx"),
+    product["data"].replace("spearman", "coverage_efficiency_analysis"),
     index=False
 )

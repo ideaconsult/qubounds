@@ -701,7 +701,7 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     ax3 = fig.add_subplot(gs[1, 0])
     
     # Get approximate histogram from global t-digest
-    hist_bins = np.linspace(0, aggregator.global_all.mean + 3*aggregator.global_all.std, 50)
+    hist_bins = np.linspace(0, max(1, aggregator.global_all.mean + 3*aggregator.global_all.std), 50)
     hist_counts = aggregator.global_digest.histogram(hist_bins)
     
     # Histogram as density
@@ -717,6 +717,7 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     ax3.set_xlabel(metric_label, fontsize=11, fontweight='bold')
     ax3.set_ylabel('Density', fontsize=11, fontweight='bold')
     ax3.set_title(f'C: Overall {metric_label} Distribution', fontsize=12, fontweight='bold')
+    ax3.set_xlim([0, 1])
     ax3.grid(axis='y', alpha=0.3, linestyle='--')
     
    # D: Metric-to-ADI correlation plot (demonstrating CP robustness)
@@ -762,7 +763,7 @@ def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
     ax4.set_xlabel('ADI (Applicability Domain Index)', fontsize=11, fontweight='bold')
     ax4.set_ylabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
     ax4.set_title(f'D: CP Robustness Check ({interpretation})\n'
-                  f'Spearman ρ = {spearman_corr:.3f} (p={spearman_p:.4f})\n',
+                  f'Spearman ρ = {spearman_corr:.3f} (p={spearman_p:.4f})',
                   #f'Expected: {expected_sign} correlation', 
                   fontsize=12, fontweight='bold')
     ax4.legend(loc='best', fontsize=9)
