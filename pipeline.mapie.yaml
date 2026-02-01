@@ -56,7 +56,7 @@ tasks:
       data: "{{vega_class}}"
       data_: ["BCF_MEYLAN"]
     grid:
-      ncm: ["crfecfp"]
+      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "cmlpecfp"]
       #ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
 
 
@@ -90,12 +90,12 @@ tasks:
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "products/mapie/ecfp4_cache.db"
-      skip_existing: False
+      skip_existing: True
       vega_models: "resources/vega_models_withclasses.xlsx"
       method_score: "LAC"      
     grid:
       #ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
-      ncm: ["crfecfp"]
+      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "cmlpecfp"]
       # "crfecfp", "cknn2jecfp","rfecfp",, "knn2jecfp"]  
       #data: ["ALGAE_COMBASECLASS", "AROM_IRMFN", "AROM_TOX21", "BEE_KNN", "CARC_ANTARES"]
       data: "{{vega_class}}"
@@ -160,7 +160,8 @@ tasks:
       data: "products/mapie/vega/classification"
     params:
       alpha: 0.1
-      ncms_to_plot: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp", None]
+      #ncms_to_plot: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp", None]
+      ncms_to_plot: ["crfecfp", "cgbecfp", "cknn2jecfp"]
 
 
   - source: tasks/mapie_regression_analysis.py
@@ -187,6 +188,7 @@ tasks:
       skip_existing: True
       classification: False
       vega_models: "resources/vega_models_withclasses.xlsx"      
+      enabled: False
     grid:
       #data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
       data: "{{vega_regr}}"
@@ -210,6 +212,7 @@ tasks:
       classification: True
       vega_models: "resources/vega_models_withclasses.xlsx"      
       vega_class_plabel: "{{vega_class_plabel}}"
+      enabled: False
     grid:
       #data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
       data: "{{vega_class}}"

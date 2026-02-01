@@ -26,6 +26,7 @@ ncm_code = None
 skip_existing = None
 classification = False
 vega_models = None
+enabled = False
 # -
 
 
@@ -46,78 +47,79 @@ for file in glob.glob(_ncmodel_path):
 _ncmodel_path
 
 
-input_file = None
-for report_prefix in ["report_", "resultsw_"]:
-    input_file = os.path.join(input_root, f"{report_prefix}{data}.txt")
-    if os.path.exists(input_file):
-        break
-    else:
-        input_file = None
-
-if input_file is None:
-    pd.DataFrame().to_excel(product["results"], index=False, sheet_name="error")
-else:
-    if skip_existing and os.path.exists(product["results"]):
-        logger.info(f"{data}\tCP results exists {product['results']}")
-    else:
-        logger.info(f"{data}\t{input_file}")
-        df, metadata = load_vega_report(file=input_file)
-        logger.debug(metadata)
-        logger.debug(df.columns)
-        df, predicted_columns = clean_vega_report_df(df)
-        logger.debug(predicted_columns)
-        main_column, main_unit, main_index = get_main_prediction(data, predicted_columns)    
-        logger.info(f"{data}\t{main_column}, {main_unit}, {main_index}")
-        logger.debug(f"*********** {df.columns}")
-        _cols = ["ID", "Smiles", main_column]
-        if "ADI" in df.columns:
-            _cols.append("ADI")
-        if "Experimental" in df.columns:
-            _cols.extend(["Experimental"])
-        df = df[_cols]
-        values_to_drop = ["-", np.nan]
-        df = df[~df[main_column].isin(values_to_drop)]    
-        logger.debug("{data}\tpredict_conformal start")
-        start_time = time.time()
-        if classification:
-            classvalues_dict = get_class_values(vega_models, data)
-            df, exp_numeric = replace_labels_with_keys(df, "Experimental", classvalues_dict)            
-            df, label_pred = clean_classdataset(df, main_column, classvalues_dict)
-            result_df, metrics_per_model, sigma_model = predict_conformal_classifier_chunked(
-                df, pred_column=label_pred,
-                true_column=exp_numeric,
-                model_path=_ncmodel_path,
-                tag=data,
-                smiles_column="Smiles",
-                chunk_size=50000
-            )
+if enabled:
+    input_file = None
+    for report_prefix in ["report_", "resultsw_"]:
+        input_file = os.path.join(input_root, f"{report_prefix}{data}.txt")
+        if os.path.exists(input_file):
+            break
         else:
-            true_column = "Experimental"
-            df[true_column] = pd.to_numeric(df[true_column], errors="coerce")
-            result_df, metrics_per_model, sigma_model = predict_conformal(
-                df, 
-                pred_column=main_column,
-                true_column=true_column,
-                model_path=_ncmodel_path,
-                tag=data,
-                smiles_column="Smiles",
-                chunk_size=50000,  
-                split="External", save_path=None
-            )
-            logger.info(sigma_model)
-        elapsed_time = time.time() - start_time
-        logger.debug(f"{data}\tpredict_conformal end (elapsed: {elapsed_time:.2f}s)")
-        model_metrics = {}
-        model_metrics[data] = metrics_per_model
-        metrics_df = pd.DataFrame.from_dict(model_metrics, orient='index')
-        metrics_df.index.name = 'Method Name'
-        metrics_df["alpha"] = alpha
-        output_data_path = product["results"]
-        logger.info(f"{data}\tWriting results to {output_data_path}")        
-        with pd.ExcelWriter(output_data_path, engine='xlsxwriter') as writer:
-            #for sheet in ['Cover sheet', 'Summary sheet']:
-            #    _df = pd.read_excel(input_file, sheet_name=sheet)
-            #    _df.to_excel(writer, sheet_name=sheet, index=False)        
-            if result_df is not None:
-                result_df.to_excel(writer, sheet_name='Prediction Intervals', index=False)        
-            metrics_df.to_excel(writer, sheet_name='Metrics') 
+            input_file = None
+
+    if input_file is None:
+        pd.DataFrame().to_excel(product["results"], index=False, sheet_name="error")
+    else:
+        if skip_existing and os.path.exists(product["results"]):
+            logger.info(f"{data}\tCP results exists {product['results']}")
+        else:
+            logger.info(f"{data}\t{input_file}")
+            df, metadata = load_vega_report(file=input_file)
+            logger.debug(metadata)
+            logger.debug(df.columns)
+            df, predicted_columns = clean_vega_report_df(df)
+            logger.debug(predicted_columns)
+            main_column, main_unit, main_index = get_main_prediction(data, predicted_columns)    
+            logger.info(f"{data}\t{main_column}, {main_unit}, {main_index}")
+            logger.debug(f"*********** {df.columns}")
+            _cols = ["ID", "Smiles", main_column]
+            if "ADI" in df.columns:
+                _cols.append("ADI")
+            if "Experimental" in df.columns:
+                _cols.extend(["Experimental"])
+            df = df[_cols]
+            values_to_drop = ["-", np.nan]
+            df = df[~df[main_column].isin(values_to_drop)]    
+            logger.debug("{data}\tpredict_conformal start")
+            start_time = time.time()
+            if classification:
+                classvalues_dict = get_class_values(vega_models, data)
+                df, exp_numeric = replace_labels_with_keys(df, "Experimental", classvalues_dict)            
+                df, label_pred = clean_classdataset(df, main_column, classvalues_dict)
+                result_df, metrics_per_model, sigma_model = predict_conformal_classifier_chunked(
+                    df, pred_column=label_pred,
+                    true_column=exp_numeric,
+                    model_path=_ncmodel_path,
+                    tag=data,
+                    smiles_column="Smiles",
+                    chunk_size=50000
+                )
+            else:
+                true_column = "Experimental"
+                df[true_column] = pd.to_numeric(df[true_column], errors="coerce")
+                result_df, metrics_per_model, sigma_model = predict_conformal(
+                    df, 
+                    pred_column=main_column,
+                    true_column=true_column,
+                    model_path=_ncmodel_path,
+                    tag=data,
+                    smiles_column="Smiles",
+                    chunk_size=50000,  
+                    split="External", save_path=None
+                )
+                logger.info(sigma_model)
+            elapsed_time = time.time() - start_time
+            logger.debug(f"{data}\tpredict_conformal end (elapsed: {elapsed_time:.2f}s)")
+            model_metrics = {}
+            model_metrics[data] = metrics_per_model
+            metrics_df = pd.DataFrame.from_dict(model_metrics, orient='index')
+            metrics_df.index.name = 'Method Name'
+            metrics_df["alpha"] = alpha
+            output_data_path = product["results"]
+            logger.info(f"{data}\tWriting results to {output_data_path}")        
+            with pd.ExcelWriter(output_data_path, engine='xlsxwriter') as writer:
+                #for sheet in ['Cover sheet', 'Summary sheet']:
+                #    _df = pd.read_excel(input_file, sheet_name=sheet)
+                #    _df.to_excel(writer, sheet_name=sheet, index=False)        
+                if result_df is not None:
+                    result_df.to_excel(writer, sheet_name='Prediction Intervals', index=False)        
+                metrics_df.to_excel(writer, sheet_name='Metrics') 
