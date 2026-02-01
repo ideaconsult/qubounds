@@ -345,6 +345,7 @@ def make_sigma_model(ncm):
     elif ncm == "crfecfp":
         return RandomForestClassifier(
             n_estimators=100, class_weight='balanced'
+            #max_features='sqrt' # Less features per split
         )
     elif ncm == "cmlpecfp":
         return MLPClassifier(

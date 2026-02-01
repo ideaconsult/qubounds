@@ -25,8 +25,8 @@ ncm = "crfecfp"
 #SCORE = "predicted0distance"
 #SCORE_LABEL = f"Predicted {ncm} Distance"
 
-SCORE = "probs_distance"
-SCORE_LABEL = "Prediction Confidence"
+SCORE = "_probs_zero_distance"
+SCORE_LABEL = "Probs Zero Difference"
 
 df_models = pd.read_excel(vega_models, engine="openpyxl")
 logger = init_logging(Path(product["nb"]).parent / "logs", "plots.log")
@@ -474,8 +474,8 @@ for key_star in upstream:
         if key.split("_")[-1] != ncm:
             continue
         _data = key.replace("mapiecproba_", "").replace("mapiec_", "").replace(f"_{ncm}", "")
-        if _data in ["DEVTOX_PG"]:
-            continue
+        #if _data in ["DEVTOX_PG"]:
+        #    continue
         file_path = upstream[key_star][key]["data"]
         # Load classification results
         try:
@@ -485,8 +485,8 @@ for key_star in upstream:
 
             df_test['data'] = _data
             df_test['split'] = 'Test'
-            if f'{_data}_probs_distance' in df_test.columns:
-                df_test = df_test.rename(columns={f'{_data}_probs_distance': SCORE})
+            if f'{_data}_probs_zero_distance' in df_test.columns:
+                df_test = df_test.rename(columns={f'{_data}_probs_zero_distance': SCORE})
             #combined_rows.append(df_test)
         except Exception:
             pass
@@ -495,8 +495,8 @@ for key_star in upstream:
             if f'{_data}_true' in df_train.columns:
                 df_train['correct'] = (df_train[f'{_data}_pred'] == df_train[f'{_data}_true'])
 
-            if f'{_data}_probs_distance' in df_train.columns:
-                df_train = df_train.rename(columns={f'{_data}_probs_distance': SCORE})                
+            if f'{_data}_probs_zero_distance' in df_train.columns:
+                df_train = df_train.rename(columns={f'{_data}_probs_zero_distance': SCORE})                
             df_train['data'] = _data
             df_train['split'] = 'Training'        
             combined_rows.append(df_train)
