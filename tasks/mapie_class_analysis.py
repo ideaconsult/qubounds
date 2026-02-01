@@ -127,17 +127,29 @@ def plot_ncm_coverage_vs_sigma(df, output_path=None, split_col='Split', alpha=0.
     # ----------------------
     # Left panel: sigma_r2 comparison
     # ----------------------
-    df_grouped = df.groupby(['ncm', split_col])['sigma_r2'].mean().reset_index()
+    df_grouped = (
+        df
+        .groupby(['ncm', split_col])['sigma_r2']
+        .agg(['mean', 'std'])
+        .reset_index()
+    )
 
     for i, sp in enumerate(splits):
-        sub = df_grouped[df_grouped[split_col] == sp].set_index('ncm').reindex(ncm_order)
+        sub = (
+            df_grouped[df_grouped[split_col] == sp]
+            .set_index('ncm')
+            .reindex(ncm_order)
+        )
+
         axes[0].barh(
             np.arange(ncm_count) + i*width,
-            sub['sigma_r2'],
+            sub['mean'],
+            xerr=sub['std'],
             height=width,
             label=str(sp),
             color=split_color_map[sp],
-            edgecolor='black'
+            edgecolor='black',
+            capsize=4
         )
 
     axes[0].set_yticks(np.arange(ncm_count) + width*(len(splits)-1)/2)
@@ -397,6 +409,8 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
     
     # Classify NCM types
     
+    print(df_cal['ncm'].unique())
+
     df_cal['ncm_type'] = df_cal['ncm'].apply(
         lambda x: "None" if x is None else 'Classifier' if x.startswith(('c', 'o')) else 'Regressor'
     )
@@ -411,8 +425,16 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
     
     
     # Create violin plot-style using multiple box plots
-    data_to_plot = [classifiers, regressors, other]
-    positions = [1, 2, 3]
+    groups = [
+        ("Classifier", classifiers),
+        ("Regressor", regressors),
+        ("None", other)
+    ]
+
+    groups = [(name, g) for name, g in groups if len(g) > 0]
+
+    labels, data_to_plot = zip(*groups)
+    positions = range(1, len(data_to_plot) + 1)
     
     bp = ax.boxplot(data_to_plot, 
                     positions=positions,
@@ -425,35 +447,43 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
                     flierprops=dict(marker='o', markerfacecolor='red', markersize=8, alpha=0.6))
     
     # Color boxes
-    bp['boxes'][0].set_facecolor('#27ae60')  # Green for classifiers
-    bp['boxes'][1].set_facecolor('#e74c3c')  # Red for regressors
-    bp['boxes'][2].set_facecolor('#95a5a6')  # Red for regressors
+    color_map = {
+        "Classifier": "#27ae60",
+        "Regressor": "#e74c3c",
+        "None": "#95a5a6"
+    }
+
+    for box, label in zip(bp['boxes'], labels):
+        box.set_facecolor(color_map[label])
     
     # Add target line
     ax.axhline(1-alpha, color='blue', linestyle='--', linewidth=2, 
                 label=f'Target ({100*(1-alpha)}%)', alpha=0.7)    
     
     # Add mean markers
-    means = [classifiers.mean(), regressors.mean(), other.mean()]
+    means = [g.mean() for g in data_to_plot]
     ax.plot(positions, means, 'D', color='gold', markersize=12, 
            markeredgecolor='black', markeredgewidth=2, label='Mean', zorder=3)
     
     # Add statistics text
-    for i, (pos, data, label) in enumerate(zip(positions, data_to_plot, ['Classifiers', 'Regressors','None'])):
+    for pos, data, label in zip(positions, data_to_plot, labels):
         mean_val = data.mean()
         median_val = data.median()
         std_val = data.std()
         
         stats_text = f'{label}\nMean: {mean_val:.3f}\nMedian: {median_val:.3f}\nStd: {std_val:.3f}'
-        y_pos = 1.0 if i == 0 else 0.95
+        #y_pos = 1.0 if i == 0 else 0.95
+        y_pos = 0.95
         ax.text(pos, y_pos, stats_text, 
                ha='center', va='top', fontsize=10,
                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='black'))
     
     # Formatting
     ax.set_xticks(positions)
-    ax.set_xticklabels(['Classifier-based\n Aux models', 'Regressor-based\n Aux models', "No Aux models"], 
-                       fontsize=12, fontweight='bold')
+    ax.set_xticklabels(labels)
+    #ax.set_xticks(positions)
+    #ax.set_xticklabels(['Classifier-based\n Aux models', 'Regressor-based\n Aux models', "No Aux models"], 
+    #                   fontsize=12, fontweight='bold')
     ax.set_ylabel('Calibration Coverage', fontsize=12, fontweight='bold')
     ax.set_title('Classifier vs Regressor NCM Performance', 
                 fontsize=14, fontweight='bold', pad=20)
@@ -462,14 +492,18 @@ def plot_classifier_vs_regressor_comparison(df, output_path=None):
     ax.grid(axis='y', alpha=0.3)
     
     # Add arrow and text showing difference
-    diff = means[0] - means[1]
-    ax.annotate('', xy=(1, means[0]), xytext=(2, means[1]),
-               arrowprops=dict(arrowstyle='<->', lw=2, color='black'))
+    if len(means) >= 2:
+        diff = means[0] - means[1]
+        ax.annotate('', 
+            xy=(positions[0], means[0]), 
+            xytext=(positions[1], means[1]),
+            arrowprops=dict(arrowstyle='<->', lw=2, color='black')
+        )
     #ax.text(1.5, (means[0] + means[1] + means[3]) / 2, f'+{diff:.3f}\n({diff*100:.1f}%)', 
     #       ha='center', va='center', fontsize=11, fontweight='bold',
     #       bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8, edgecolor='black'))
     
-    plt.tight_layout()
+    #plt.tight_layout()
     
     if output_path:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
