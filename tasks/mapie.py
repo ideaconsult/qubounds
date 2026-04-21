@@ -17,7 +17,7 @@ from tasks.mapie_diagnostic import (
 # + tags=["parameters"]
 input_folder = None
 data = None
-alpha = 0.1
+alpha = None
 cache_path = None
 product = None
 skip_existing = None
@@ -92,7 +92,7 @@ else:
             predicted_tag_test=predicted_tag_test,
             experimental_tag_test=experimental_tag_test,
             cache_path=cache_path,
-            alpha=0.1,
+            alpha=alpha,
             output_model_path=product["ncmodel"],
             ncm=ncm
         )

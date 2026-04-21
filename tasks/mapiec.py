@@ -18,7 +18,7 @@ import pickle
 # + tags=["parameters"]
 input_folder = None
 data = None
-alpha = 0.1
+alpha = None
 cache_path = None
 product = None
 id = "Smiles"
@@ -82,7 +82,7 @@ else:
         predicted_tag=label_pred_train,
         df_calibration=df_calibration,
         cache_path=cache_path,
-        alpha=0.1,
+        alpha=alpha,
         output_model_path=product["ncmodel"],
         ncm=ncm,
         method_score=method_score

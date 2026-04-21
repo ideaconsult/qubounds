@@ -56,7 +56,7 @@ tasks:
       data: "{{vega_class}}"
       data_: ["BCF_MEYLAN"]
     grid:
-      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "cmlpecfp"]
+      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "cmlpecfp","gbecfp", "rfecfp", "knn2jecfp"]
       #ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
 
 
@@ -90,12 +90,12 @@ tasks:
       calculate_coverage_metrics: True
       id: "Smiles"
       cache_path: "{{CP_MODELS}}/mapie/ecfp4_cache.db"
-      skip_existing: True
+      skip_existing: False
       vega_models: "resources/vega_models_withclasses.xlsx"
       method_score: "LAC"      
     grid:
       #ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
-      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "cmlpecfp"]
+      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "cmlpecfp","gbecfp", "rfecfp", "knn2jecfp"]
       # "crfecfp", "cknn2jecfp","rfecfp",, "knn2jecfp"]  
       #data: ["ALGAE_COMBASECLASS", "AROM_IRMFN", "AROM_TOX21", "BEE_KNN", "CARC_ANTARES"]
       data: "{{vega_class}}"
