@@ -12,7 +12,7 @@ tasks:
       data: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/[[data]]/mapie.xlsx"
       ncmodel: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/[[data]]/mapie.pkl"
     params:
-      input_folder: "products/vega/regression"
+      input_folder: "{{VEGA_DATA}}/vega/regression"
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
@@ -33,7 +33,7 @@ tasks:
       data: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/spearman.xlsx"
       plot: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/spearman.png"
     params:
-      input_folder: "products/vega/regression"
+      input_folder: "{{VEGA_DATA}}/vega/regression"
       vega_models: "resources/vega_models_withclasses.xlsx"        
       mode: "regression"
       data: "{{vega_regr}}"
@@ -50,7 +50,7 @@ tasks:
       data: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/spearman.xlsx"
       plot: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/spearman.png"
     params:
-      input_folder: "products/vega/class_lac"
+      input_folder: "{{VEGA_DATA}}/vega/class_lac"
       vega_models: "resources/vega_models_withclasses.xlsx"        
       mode: "classification"
       data: "{{vega_class}}"
@@ -68,7 +68,7 @@ tasks:
       data: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/classification_metrics.xlsx"
       plot: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/coverage_analysis.png"
     params:
-      input_folder: "products/vega/class_proba"
+      input_folder: "{{VEGA_DATA}}/vega/class_proba"
       vega_models: "resources/vega_models_withclasses.xlsx"        
       mode: "classification"
       data: "{{vega_class}}"
@@ -85,7 +85,7 @@ tasks:
       data: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.xlsx"
       ncmodel: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.pkl"
     params:
-      input_folder: "products/vega/classification"
+      input_folder: "{{VEGA_DATA}}/vega/classification"
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
@@ -108,7 +108,7 @@ tasks:
       data: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.xlsx"
       ncmodel: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.pkl"
     params:
-      input_folder: "products/vega/classification"
+      input_folder: "{{VEGA_DATA}}/vega/classification"
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
@@ -183,8 +183,8 @@ tasks:
       results: "{{VEGA_CP_OUTPUT}}/[[input_key]]/regression/report_cp_[[data]]_[[ncm_code]].xlsx"
     params:
       config: "{{config}}"
-      cache_path: "products/ecfp4_cache.db"
-      ncmodel: "products/mapie/vega/regression/{ncm_code}/{data}/*.pkl"
+      cache_path: "{{CP_MODELS}}/mapie/ecfp4_cache.db"
+      ncmodel: "{{CP_MODELS}}/mapie/vega/regression/{ncm_code}/{data}/*.pkl"
       skip_existing: True
       classification: False
       vega_models: "resources/vega_models_withclasses.xlsx"      
@@ -259,7 +259,7 @@ tasks:
       results: "{{VEGA_CP_OUTPUT}}/[[input_key]]/chemicals.json"
     params:
       config: "{{config}}"
-      cache_path: "products/ecfp4_cache.db"
+      cache_path: "{{VEGA_CP_OUTPUT}}/ecfp4_cache.db"
     grid:
       input_key: "{{input_key}}"
 
@@ -274,7 +274,7 @@ tasks:
       enabled: "{{enable_archive}}"
       #folders_to_scan: ["{{VEGA_CP_OUTPUT}}", "{{VEGA_CP_OUTPUT}}"]
       folders_to_scan: [
-                    "products/vega/classification", "products/vega/regression"]
+                    "{{VEGA_DATA}}/vega/classification", "{{VEGA_DATA}}/vega/regression"]
       #, "products/mapie/vega/regression/rlgbmecfp"]
       extensions_to_include: [".xlsx"]
       recursive: True
