@@ -8,15 +8,15 @@ tasks:
   - source: tasks/mapie.py
     name: "mapie_[[data]]_[[ncm]]"
     product: 
-      nb: "products/mapie/vega/regression/[[ncm]]/[[data]]/mapie.ipynb"
-      data: "products/mapie/vega/regression/[[ncm]]/[[data]]/mapie.xlsx"
-      ncmodel: "products/mapie/vega/regression/[[ncm]]/[[data]]/mapie.pkl"
+      nb: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/[[data]]/mapie.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/[[data]]/mapie.xlsx"
+      ncmodel: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/[[data]]/mapie.pkl"
     params:
       input_folder: "products/vega/regression"
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
-      cache_path: "products/mapie/ecfp4_cache.db"
+      cache_path: "{{CP_MODELS}}/mapie/ecfp4_cache.db"
       skip_existing: True
     grid:
       #ncm: ["rfecfp", "gbecfp", "knnecfp", "knnjecfp", "knnecfp2"]    
@@ -29,9 +29,9 @@ tasks:
     name: "mapieplot_regression_[[ncm]]"
     upstream: ["mapie_*"]    
     product: 
-      nb: "products/mapie/vega/regression/[[ncm]]/mapie_plot.ipynb"
-      data: "products/mapie/vega/regression/[[ncm]]/spearman.xlsx"
-      plot: "products/mapie/vega/regression/[[ncm]]/spearman.png"
+      nb: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/mapie_plot.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/spearman.xlsx"
+      plot: "{{CP_MODELS}}/mapie/vega/regression/[[ncm]]/spearman.png"
     params:
       input_folder: "products/vega/regression"
       vega_models: "resources/vega_models_withclasses.xlsx"        
@@ -46,9 +46,9 @@ tasks:
     name: "mapieplot_classlac_[[ncm]]"
     upstream: ["mapiec_*"]    
     product: 
-      nb: "products/mapie/vega/class_lac/[[ncm]]/mapie_plot.ipynb"
-      data: "products/mapie/vega/class_lac/[[ncm]]/spearman.xlsx"
-      plot: "products/mapie/vega/class_lac/[[ncm]]/spearman.png"
+      nb: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/mapie_plot.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/spearman.xlsx"
+      plot: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/spearman.png"
     params:
       input_folder: "products/vega/class_lac"
       vega_models: "resources/vega_models_withclasses.xlsx"        
@@ -64,9 +64,9 @@ tasks:
     name: "mapieplot_classproba_[[ncm]]"
     upstream: ["mapiecproba_*"]    
     product: 
-      nb: "products/mapie/vega/class_proba/[[ncm]]/mapie_plot.ipynb"
-      data: "products/mapie/vega/class_proba/[[ncm]]/classification_metrics.xlsx"
-      plot: "products/mapie/vega/class_proba/[[ncm]]/coverage_analysis.png"
+      nb: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/mapie_plot.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/classification_metrics.xlsx"
+      plot: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/coverage_analysis.png"
     params:
       input_folder: "products/vega/class_proba"
       vega_models: "resources/vega_models_withclasses.xlsx"        
@@ -81,15 +81,15 @@ tasks:
   - source: tasks/mapiec.py
     name: "mapiec_[[data]]_[[ncm]]"
     product: 
-      nb: "products/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.ipynb"
-      data: "products/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.xlsx"
-      ncmodel: "products/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.pkl"
+      nb: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.xlsx"
+      ncmodel: "{{CP_MODELS}}/mapie/vega/class_lac/[[ncm]]/[[data]]/mapie.pkl"
     params:
       input_folder: "products/vega/classification"
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
-      cache_path: "products/mapie/ecfp4_cache.db"
+      cache_path: "{{CP_MODELS}}/mapie/ecfp4_cache.db"
       skip_existing: True
       vega_models: "resources/vega_models_withclasses.xlsx"
       method_score: "LAC"      
@@ -104,15 +104,15 @@ tasks:
   - source: tasks/mapiec.py
     name: "mapiecproba_[[data]]_[[ncm]]"
     product: 
-      nb: "products/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.ipynb"
-      data: "products/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.xlsx"
-      ncmodel: "products/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.pkl"
+      nb: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.xlsx"
+      ncmodel: "{{CP_MODELS}}/mapie/vega/class_proba/[[ncm]]/[[data]]/mapie.pkl"
     params:
       input_folder: "products/vega/classification"
       alpha: 0.1
       calculate_coverage_metrics: True
       id: "Smiles"
-      cache_path: "products/mapie/ecfp4_cache.db"
+      cache_path: "{{CP_MODELS}}/mapie/ecfp4_cache.db"
       skip_existing: True
       vega_models: "resources/vega_models_withclasses.xlsx"
       prob_columns: "{{vega_class_plabel}}"
@@ -130,8 +130,8 @@ tasks:
     params:
       vega_models: "resources/vega_models_withclasses.xlsx"    
     product: 
-      nb: "products/mapie/vega/regression/summary.ipynb"
-      data: "products/mapie/vega/regression/summary.xlsx"        
+      nb: "{{CP_MODELS}}/mapie/vega/regression/summary.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/regression/summary.xlsx"        
 
   - source: tasks/conformal_classification_summary.py
     name: "classification_summary_mapie"
@@ -139,8 +139,8 @@ tasks:
     params:
       vega_models: "resources/vega_models_withclasses.xlsx"
     product: 
-      nb: "products/mapie/vega/class_lac/summary.ipynb"
-      data: "products/mapie/vega/class_lac/summary.xlsx"
+      nb: "{{CP_MODELS}}/mapie/vega/class_lac/summary.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/class_lac/summary.xlsx"
 
   - source: tasks/conformal_classification_summary.py
     name: "classproba_summary_mapie"
@@ -148,16 +148,16 @@ tasks:
     params:
       vega_models: "resources/vega_models_withclasses.xlsx"
     product: 
-      nb: "products/mapie/vega/class_proba/summary.ipynb"
-      data: "products/mapie/vega/class_proba/summary.xlsx"  
+      nb: "{{CP_MODELS}}/mapie/vega/class_proba/summary.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/class_proba/summary.xlsx"  
                           
 
   - source: tasks/mapie_class_analysis.py
     name: "mapieanalysis_class"
     upstream: ["classification_summary_mapie"]
     product: 
-      nb: "products/mapie/vega/classification/mapie_class_analysis.ipynb"
-      data: "products/mapie/vega/classification"
+      nb: "{{CP_MODELS}}/mapie/vega/classification/mapie_class_analysis.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/classification"
     params:
       alpha: 0.1
       #ncms_to_plot: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp", None]
@@ -168,8 +168,8 @@ tasks:
     name: "mapieanalysis_regr"
     upstream: ["regression_summary_mapie"]
     product: 
-      nb: "products/mapie/vega/regression/mapie_regr_analysis.ipynb"
-      data: "products/mapie/vega/regression"
+      nb: "{{CP_MODELS}}/mapie/vega/regression/mapie_regr_analysis.ipynb"
+      data: "{{CP_MODELS}}/mapie/vega/regression"
     params:
       alpha: 0.1    
 
@@ -206,13 +206,13 @@ tasks:
       results: "{{VEGA_CP_OUTPUT}}/[[input_key]]/{{class_folder}}/report_cp_[[data]]_[[ncm_code]].xlsx"
     params:
       config: "{{config}}"
-      cache_path: "products/ecfp4_cache.db"
-      ncmodel: "products/mapie/vega/{{class_folder}}/{ncm_code}/{data}/*.pkl"
+      cache_path: "{{CP_MODELS}}/mapie/ecfp4_cache.db"
+      ncmodel: "{{CP_MODELS}}/mapie/vega/{{class_folder}}/{ncm_code}/{data}/*.pkl"
       skip_existing: True
       classification: True
       vega_models: "resources/vega_models_withclasses.xlsx"      
       vega_class_plabel: "{{vega_class_plabel}}"
-      enabled: False
+      enabled: True
     grid:
       #data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
       data: "{{vega_class}}"
@@ -226,7 +226,7 @@ tasks:
     #upstream: []
     product: 
       nb: "{{VEGA_CP_OUTPUT}}//results/class_lac/outcome_plot_class.ipynb"
-      results: "{{VEGA_CP_OUTPUT}}/results/class_lac/uncertainty_domain_figure_global.png"
+      results: "{{VEGA_CP_OUTPUT}}//results/class_lac/uncertainty_domain_figure_global.png"
     params:
       classification: True
       ncm_code: "crfecfp"
@@ -268,7 +268,7 @@ tasks:
     name: "make_archive_vega"
     upstream: []    
     product: 
-      nb: "products/make_archive_vega.ipynb"
+      nb: "{{CP_MODELS}}/make_archive_vega.ipynb"
       zip: "{{VEGA_CP_OUTPUT}}/vega_datasets.zip"
     params:
       enabled: "{{enable_archive}}"
@@ -284,13 +284,13 @@ tasks:
     name: "make_archive_mapie"
     upstream: []    
     product: 
-      nb: "products/make_archive_mapie.ipynb"
+      nb: "{{CP_MODELS}}/make_archive_mapie.ipynb"
       zip: "{{VEGA_CP_OUTPUT}}/vega_mapie_conformal.zip"
     params:
       enabled: "{{enable_archive}}"
       #folders_to_scan: ["{{VEGA_CP_OUTPUT}}", "{{VEGA_CP_OUTPUT}}"]
-      folders_to_scan: ["products/mapie/vega/regression/rlgbmecfp", 
-                    "products/mapie/vega/class_lac/crfecfp"]
+      folders_to_scan: ["{{CP_MODELS}}/mapie/vega/regression/rlgbmecfp", 
+                    "{{CP_MODELS}}/mapie/vega/class_lac/crfecfp"]
       #, "products/mapie/vega/regression/rlgbmecfp"]
       extensions_to_include: [".xlsx"]
       recursive: True
@@ -300,7 +300,7 @@ tasks:
     name: "make_archive_comptox_class_hard"
     upstream: []    
     product: 
-      nb: "products/make_archive_comptox.ipynb"
+      nb: "{{CP_MODELS}}/make_archive_comptox.ipynb"
       zip: "{{VEGA_CP_OUTPUT}}/vega_comptox_conformal_class_hard.zip"
     params:
       enabled: "{{enable_archive}}"
@@ -315,7 +315,7 @@ tasks:
     name: "make_archive_comptox_regr"
     upstream: []    
     product: 
-      nb: "products/make_archive_comptox_regr.ipynb"
+      nb: "{{CP_MODELS}}/make_archive_comptox_regr.ipynb"
       zip: "{{VEGA_CP_OUTPUT}}/vega_comptox_conformal_regression.zip"
     params:
       enabled: "{{enable_archive}}"
