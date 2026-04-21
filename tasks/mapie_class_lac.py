@@ -51,10 +51,12 @@ class NCMProbabilisticClassifier(ClassifierMixin):
       - NCM gives: P(distance = 0, 1, 2, 3 | x)
       - Convert to: P(class = j | x) = P(distance = |j - ŷ| | x)
     """
-    def __init__(self, y_pred, ncm_model, ncm_type, classes=None):
+    def __init__(self, y_pred, ncm_model, ncm_type, classes=None, epsilon=None, temperature=None):
         self.y_pred = np.asarray(y_pred)
         self.ncm_model = ncm_model
         self.ncm_type = ncm_type
+        self.epsilon = epsilon
+        self.temperature = temperature
         
         if classes is None:
             classes = np.unique(self.y_pred)
@@ -96,7 +98,25 @@ class NCMProbabilisticClassifier(ClassifierMixin):
         if self.ncm_type.startswith("c") or self.ncm_type.startswith("o"):
             # Classifier NCM - returns P(distance = k)
             distance_probs = self.ncm_model.predict_proba(X)
+            entropy = -np.sum(distance_probs * np.log(distance_probs + 1e-9), axis=1)
             distance_classes = self.ncm_model.classes_
+
+            if self.temperature is not None:
+                # TEMPERATURE SCALING (Try T between 1.5 and 3.0)
+                # Work in log space to avoid overflow
+                log_probs = np.log(distance_probs + 1e-9) 
+                distance_probs = np.exp(log_probs / self.temperature)
+                distance_probs /= distance_probs.sum(axis=1, keepdims=True)
+                entropy = -np.sum(distance_probs * np.log(distance_probs + 1e-9), axis=1)
+
+            # smoothing
+            if self.epsilon is not None:
+                distance_probs = np.array(distance_probs, dtype=np.float64)
+                k = distance_probs.shape[1]
+                smooth_val = float(self.epsilon) / float(k)
+                multiplier = 1.0 - float(self.epsilon)
+                distance_probs = (distance_probs * multiplier) + smooth_val
+                entropy = -np.sum(distance_probs * np.log(distance_probs + 1e-9), axis=1)
         else:
             # Regressor NCM - create pseudo-probabilities centered at predicted distance
             # (Less principled, but provides some uncertainty)
@@ -140,7 +160,6 @@ class NCMProbabilisticClassifier(ClassifierMixin):
             else:
                 # Fallback: uniform distribution
                 class_probs[i] = 1.0 / self.n_classes_
-        
         return class_probs
 
 
@@ -230,6 +249,25 @@ def train_conformal_classifier_hard(
     y_pred_train = np.array([class_to_mapped[c] for c in y_pred_train_original])
     classes = np.arange(len(classes_original))
     
+    """
+    # Calculate the exact base accuracy on the calibration set
+    # LAC behaves weird if the base model accuracy is > coverage
+    base_accuracy = np.mean(y_cal == y_pred_cal)
+    print("base_accuracy", base_accuracy)
+    # Adjust alpha mathematically if the base model is too accurate
+    effective_alpha = alpha
+    if (1 - effective_alpha) <= base_accuracy:
+        # Increase coverage target to slightly exceed base accuracy
+        # This pushes the quantile calculation into the error bucket, 
+        # allowing LAC to evaluate alternative classes.
+        effective_alpha = 1.0 - base_accuracy - 0.01 
+        
+        # Failsafe if base_accuracy is exactly 1.0
+        if effective_alpha <= 0:
+            effective_alpha = 0.01 
+            
+        logger.info(f"Adjusted alpha from {alpha} to {effective_alpha:.3f} because base accuracy ({base_accuracy:.3f}) > target coverage")
+    """
     # Init fingerprint cache
     init_cache(cache_path)
     
@@ -314,7 +352,9 @@ def train_conformal_classifier_hard(
         y_pred=y_pred_cal,
         ncm_model=sigma_model,
         ncm_type=ncm,
-        classes=classes
+        classes=classes,
+        temperature=None,
+        epsilon=None
     )
     
     # Use standard MAPIE LAC score
@@ -328,25 +368,28 @@ def train_conformal_classifier_hard(
         conformity_score=conformity_score,
         prefit=True,
         confidence_level=1 - alpha
+        #confidence_level=1 - effective_alpha
     )
     
     logger.info(f"Calibrating with MAPIE {method_score} (alpha={alpha})...")
     mapie.estimator_ = estimator.fit(None, None)
     mapie.conformalize(X_conformalize=X_ecfp_cal, y_conformalize=y_cal)
-    
+
     # -------------------------------------------
     # Validation
     # -------------------------------------------
-    y_pred_sets = mapie.predict(X_ecfp_cal)
+    # ---- MAPIE prediction sets (UPDATED TO PREDICT_SET) ----
+    _, y_pred_sets = mapie.predict_set(X_ecfp_cal)
+
+    #print("y_pred_sets", y_pred_sets)
     
-    if hasattr(y_pred_sets, 'shape') and len(y_pred_sets.shape) == 2:
-        coverage = y_pred_sets[np.arange(len(y_cal)), y_cal].mean()
-        avg_size = y_pred_sets.sum(axis=1).mean()
-    else:
-        pred_sets = [list(s) if isinstance(s, (list, set, np.ndarray)) else [s] 
-                    for s in y_pred_sets]
-        coverage = np.mean([y_cal[i] in pred_sets[i] for i in range(len(y_cal))])
-        avg_size = np.mean([len(s) for s in pred_sets])
+    # Now y_pred_sets is a numpy array, we can check ndim
+    if y_pred_sets.ndim == 3:
+        y_pred_sets = np.squeeze(y_pred_sets, axis=2)
+
+    # Boolean indexing for coverage
+    coverage = y_pred_sets[np.arange(len(y_cal)), y_cal].mean()
+    avg_size = y_pred_sets.sum(axis=1).mean()
     
     logger.info(f"Calibration coverage: {coverage:.2%} (target: {1-alpha:.2%})")
     logger.info(f"Avg set size: {avg_size:.2f}")
@@ -527,26 +570,19 @@ def predict_conformal_classifier_hard_chunked(
 
         # ---- MAPIE prediction sets ----
         mapie.estimator_.y_pred = y_pred
-        y_pred_sets = mapie.predict(X_ecfp)
+        # Unpack tuple here as well
+        _, y_pred_sets = mapie.predict_set(X_ecfp)
+
+        if y_pred_sets.ndim == 3:
+            y_pred_sets = np.squeeze(y_pred_sets, axis=2)
 
         # ---- decode prediction sets ----
-        if hasattr(y_pred_sets, "shape") and y_pred_sets.ndim == 2:
-            set_sizes = y_pred_sets.sum(axis=1)
-            pred_sets = [
-                classes[row.astype(bool)].tolist()
-                for row in y_pred_sets
-            ]
-        else:
-            pred_sets = [
-                list(s) if isinstance(s, (list, set, np.ndarray)) else [s]
-                for s in y_pred_sets
-            ]
-            set_sizes = np.array([len(s) for s in pred_sets])
-
+        set_sizes = y_pred_sets.sum(axis=1)
+        
         pred_sets_original = [
-            [mapped_to_class[c] for c in s] for s in pred_sets
+            classes_original[y_pred_sets[idx, :]].tolist()
+            for idx in range(len(y_pred_sets))
         ]
-
         all_set_sizes.extend(set_sizes)
 
         # ---- metrics per chunk ----
