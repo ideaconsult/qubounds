@@ -25,8 +25,11 @@ ncm = "crfecfp"
 #SCORE = "predicted0distance"
 #SCORE_LABEL = f"Predicted {ncm} Distance"
 
-SCORE = "_probs_zero_distance"
-SCORE_LABEL = "Probs Zero Difference"
+#SCORE = "_probs_zero_distance"
+#SCORE_LABEL = "Probs Zero Difference"
+
+SCORE = "Set_Size"
+SCORE_LABEL = "Set Size"
 
 df_models = pd.read_excel(vega_models, engine="openpyxl")
 logger = init_logging(Path(product["nb"]).parent / "logs", "plots.log")
@@ -485,8 +488,10 @@ for key_star in upstream:
 
             df_test['data'] = _data
             df_test['split'] = 'Test'
-            if f'{_data}_probs_zero_distance' in df_test.columns:
-                df_test = df_test.rename(columns={f'{_data}_probs_zero_distance': SCORE})
+
+            #if f'{_data}_probs_zero_distance' in df_test.columns:
+            if f'{_data}{SCORE}' in df_test.columns:
+                df_test = df_test.rename(columns={f'{_data}{SCORE}': SCORE})
             #combined_rows.append(df_test)
         except Exception:
             pass
@@ -495,13 +500,16 @@ for key_star in upstream:
             if f'{_data}_true' in df_train.columns:
                 df_train['correct'] = (df_train[f'{_data}_pred'] == df_train[f'{_data}_true'])
 
-            if f'{_data}_probs_zero_distance' in df_train.columns:
-                df_train = df_train.rename(columns={f'{_data}_probs_zero_distance': SCORE})                
+            if f'{_data}{SCORE}' in df_train.columns:
+                df_train = df_train.rename(columns={f'{_data}{SCORE}': SCORE})                
             df_train['data'] = _data
             df_train['split'] = 'Training'        
             combined_rows.append(df_train)
         except Exception:
             pass
+
+for _df in combined_rows:
+    print(_df.columns)
 
 combined_df = pd.concat(combined_rows, ignore_index=True)
 
@@ -591,7 +599,7 @@ else:
 
 # Original coverage by ADI bins
 HTML("<h3>Coverage and Uncertainty Stratified by Applicability Domain (ADI)</h3>") 
-HTML("<p>Empirical coverage rate, prediction set size, and certainty as a function of applicability domain index (ADI).</p>")
+HTML("<p>Empirical coverage rate, prediction set size, and efficiency as a function of applicability domain index (ADI).</p>")
 coverage_by_adi_bins_classification(combined_df, 
                                     alpha=0.1, save_path=product["plot"].replace("spearman","coverage_by_adi_bins"))
 

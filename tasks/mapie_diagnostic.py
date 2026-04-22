@@ -1275,7 +1275,7 @@ def plot_coverage_efficiency_analysis(combined_df, save_path=None,
         axes[1, 0].set_ylabel('Endpoints (sorted by coverage)', 
                              fontsize=12, fontweight='bold')
         axes[1, 0].set_yticks([])
-    
+
     axes[1, 0].set_xlabel('Relative Interval Width', fontsize=12, fontweight='bold')
     axes[1, 0].set_title('C. Interval Width by Endpoint', fontsize=13, fontweight='bold')
     axes[1, 0].grid(True, alpha=0.3, axis='x')
@@ -1421,12 +1421,15 @@ def plot_coverage_efficiency_classification(
         distance_col: ['mean', 'median', 'std'],
         'ADI': 'mean'
     }).reset_index()
+
+    print(distance_col)
+    mean_efficiency = f"mean_{distance_col}"
     
     dataset_stats.columns = ['data', 'coverage', 'n', 
-                            'mean_distance', 'median_distance', 'std_distance', 'mean_adi']
+                            mean_efficiency, 'median_distance', 'std_distance', 'mean_adi']
     dataset_stats = dataset_stats.sort_values('coverage')
     
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
     
     # ========== PANEL A: Coverage by Dataset ==========
     colors_coverage = [
@@ -1510,8 +1513,8 @@ def plot_coverage_efficiency_classification(
                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     
     # ========== PANEL C: Prediction Distance Distribution ==========
-#    try:
     # Boxplots of distance by dataset
+    """
     data_for_box = [combined_df[combined_df['data'] == d][distance_col].values
                     for d in dataset_stats['data']]
     
@@ -1521,9 +1524,29 @@ def plot_coverage_efficiency_classification(
     for patch in bp['boxes']:
         patch.set_facecolor('#2196F3')
         patch.set_alpha(0.6)
-    
+    """
+
+    # Panel: Set Size Distribution
+    grouped = combined_df.groupby(['data', distance_col]).size().unstack(fill_value=0)
+    grouped_pct = grouped.div(grouped.sum(axis=1), axis=0) * 100
+
+    grouped_pct.plot(
+        kind='barh',
+        stacked=True,
+        ax=axes[1, 0],
+        cmap='RdYlGn_r',  # Red (size=1) to green (larger sets)
+        edgecolor='black',
+        linewidth=0.5,
+        width=0.8
+    )
+
+    axes[1, 0].set_xlabel('Set size percentage (%)', fontweight='bold')
+    axes[1, 0].set_ylabel('')
+    axes[1, 0].set_title('Set Size Distribution', fontweight='bold')
+    axes[1, 0].legend(title='Set Size', bbox_to_anchor=(1.02, 0.5), loc='center left', ncol=1)
+    #axes[1, 0].set_xlim([0, 100])        
     # Conditional labeling
-    if len(dataset_stats) <= 20:
+    if len(dataset_stats) <= 50:
         axes[1, 0].set_yticks(range(1, len(dataset_stats) + 1))
         axes[1, 0].set_yticklabels(dataset_stats['data'], fontsize=7)
     else:
@@ -1531,7 +1554,11 @@ def plot_coverage_efficiency_classification(
                             fontsize=12, fontweight='bold')
         axes[1, 0].set_yticks([])
     
-    axes[1, 0].set_xlabel(distance_label, fontsize=12, fontweight='bold')
+
+    axes[1, 0].set_xlim(0, None)    
+    # axes[1, 0]..autoscale(enable=True, axis='x', tight=False)
+    #     
+    #axes[1, 0].set_xlabel(distance_label, fontsize=12, fontweight='bold')
     axes[1, 0].set_title(f'C. {distance_label} by {dataset_label}',
                         fontsize=13, fontweight='bold')
     axes[1, 0].grid(True, alpha=0.3, axis='x')
@@ -1546,13 +1573,13 @@ def plot_coverage_efficiency_classification(
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
 #    except Exception as x:
 #        print(x)
-# ========== PANEL D: Coverage-Certainty Tradeoff (REVISED) ==========
+# ========== PANEL D: Coverage-Efficiency Tradeoff  ==========
     # Higher Confidence = more certain (better)
     # Target: High coverage (Validity) + High Confidence = Top-Right
     
     sizes = np.sqrt(dataset_stats['n']) * 2
-    
-    scatter = axes[1, 1].scatter(dataset_stats['mean_distance'], # Changed from distance
+
+    scatter = axes[1, 1].scatter(dataset_stats[mean_efficiency], # Changed from distance
                                 dataset_stats['coverage'],
                                 s=sizes, alpha=0.6, c=colors_coverage,
                                 edgecolor='black', linewidth=0.5)
@@ -1561,23 +1588,23 @@ def plot_coverage_efficiency_classification(
     axes[1, 1].axhline(y=0.9, color='red', linestyle='--', linewidth=1.5,
                       alpha=0.5, label='Target coverage (90%)')
     
-    median_conf = dataset_stats['mean_distance'].median()
+    median_conf = dataset_stats[mean_efficiency].median()
     axes[1, 1].axvline(x=median_conf, color='blue', linestyle='--',
-                      linewidth=1.5, alpha=0.5, label=f'Median Confidence')
+                      linewidth=1.5, alpha=0.5, label=f'Median {distance_col}')
     
     # Ideal region: high coverage + high confidence (Top-Right)
     # x-range: from median/high threshold to 1.0
-    axes[1, 1].fill_between([0.8, 1.0], 0.85, .95, # High-confidence zone
+    axes[1, 1].fill_between([0.8, 1.2], 0.85, .95, # High-confidence zone
                            alpha=0.1, color='green', label='Ideal region')
     
-    axes[1, 1].set_xlabel('Mean Prediction Confidence',
+    axes[1, 1].set_xlabel(f'Mean {distance_col}',
                          fontsize=12, fontweight='bold')
     axes[1, 1].set_ylabel('Coverage Rate (Validity)',
                          fontsize=12, fontweight='bold')
-    axes[1, 1].set_title('D. Coverage-Certainty Tradeoff',
+    axes[1, 1].set_title('D. Coverage-Efficiency Tradeoff',
                         fontsize=13, fontweight='bold')
     axes[1, 1].set_ylim(0.7, 1.02)
-    axes[1, 1].set_xlim(0.6, 1.02) # Focused on the confidence range
+    #axes[1, 1].set_xlim(0.6, 1.02) # Focused on the confidence range
     axes[1, 1].grid(True, alpha=0.3)
     
     # Annotate best/worst
@@ -1586,12 +1613,12 @@ def plot_coverage_efficiency_classification(
     #best = dataset_stats.nlargest(annotate_top_n, 'score')
     #worst = dataset_stats.nsmallest(annotate_top_n, 'score')
     in_validity_zone = dataset_stats['coverage'].between(0.85, 0.95)
-    in_efficiency_zone = dataset_stats['mean_distance'] >= 0.80
+    in_efficiency_zone = dataset_stats[mean_efficiency].between(.8, 1.2)
 
     # 2. Identify "Best" (Top-Right of the defined box)
     # We prioritize models that satisfy both, then rank by highest confidence
     dataset_stats['is_ideal'] = in_validity_zone & in_efficiency_zone
-    best = dataset_stats[dataset_stats['is_ideal']].nlargest(annotate_top_n, 'mean_distance')
+    best = dataset_stats[dataset_stats['is_ideal']].nlargest(annotate_top_n, mean_efficiency)
 
     # 3. Identify "Worst" (The Outliers)
     # We define worst as models that fail the validity floor (< 0.85) 
@@ -1601,7 +1628,7 @@ def plot_coverage_efficiency_classification(
     for i, (_, row) in enumerate(best.iterrows()):
         offset_y = 15 + i * 15
         axes[1, 1].annotate(row['data'],
-                           xy=(row['mean_distance'], row['coverage']),
+                           xy=(row[mean_efficiency], row['coverage']),
                            xytext=(-30, offset_y), textcoords='offset points',
                            fontsize=7, color='darkgreen',
                            bbox=dict(boxstyle='round,pad=0.3',
@@ -1614,7 +1641,7 @@ def plot_coverage_efficiency_classification(
     for i, (_, row) in enumerate(worst.iterrows()):
         offset_y = -15 - i * 15
         axes[1, 1].annotate(row['data'],
-                           xy=(row['mean_distance'], row['coverage']),
+                           xy=(row[mean_efficiency], row['coverage']),
                            xytext=(30, offset_y), textcoords='offset points',
                            fontsize=7, color='darkred',
                            bbox=dict(boxstyle='round,pad=0.3',
@@ -1644,7 +1671,7 @@ def plot_coverage_efficiency_classification(
     
     # Print summary
     print("\n" + "="*70)
-    print("CLASSIFICATION COVERAGE AND CERTAINTY SUMMARY")
+    print("CLASSIFICATION COVERAGE AND SET SIZE SUMMARY")
     print("="*70)
     print(f"\nDatasets analyzed: {len(dataset_stats)}")
     print(f"\nCoverage Statistics:")
@@ -1654,22 +1681,22 @@ def plot_coverage_efficiency_classification(
     print(f"  Within target (0.85-0.95): {n_good}/{len(dataset_stats)} ({n_good/len(dataset_stats)*100:.1f}%)")
     
     print(f"\n{distance_label}:")
-    print(f"  Mean: {dataset_stats['mean_distance'].mean():.3f}")
-    print(f"  Median: {dataset_stats['mean_distance'].median():.3f}")
-    print(f"  Range: [{dataset_stats['mean_distance'].min():.3f}, {dataset_stats['mean_distance'].max():.3f}]")
+    print(f"  Mean: {dataset_stats[mean_efficiency].mean():.3f}")
+    print(f"  Median: {dataset_stats[mean_efficiency].median():.3f}")
+    print(f"  Range: [{dataset_stats[mean_efficiency].min():.3f}, {dataset_stats[mean_efficiency].max():.3f}]")
     
-    rho_dist_cov = spearmanr(dataset_stats['mean_distance'], dataset_stats['coverage'])
+    rho_dist_cov = spearmanr(dataset_stats[mean_efficiency], dataset_stats['coverage'])
     print(f"\nCorrelation Tests:")
     print(f"  {distance_label} vs Coverage: ρ = {rho_dist_cov[0]:.3f}, p = {rho_dist_cov[1]:.3f}")
     print(f"  {distance_label} size vs Coverage: ρ = {rho_size:.3f}, p = {p_size:.3f}")
     
     print(f"\nBest Performers (high coverage, low distance):")
     for _, row in best.iterrows():
-        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, {distance_label}={row['mean_distance']:.3f}")
+        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, {distance_label}={row[mean_efficiency]:.3f}")
     
     print(f"\nWorst Performers:")
     for _, row in worst.iterrows():
-        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, {distance_label}={row['mean_distance']:.3f}")
+        print(f"  {row['data']:25s}: coverage={row['coverage']:.3f}, {distance_label}={row[mean_efficiency]:.3f}")
     
     print("="*70)
     
