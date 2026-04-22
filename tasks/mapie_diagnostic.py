@@ -1598,34 +1598,28 @@ def plot_coverage_efficiency_classification(
     axes[1, 1].fill_between([0.8, 1.2], 0.85, .95, # High-confidence zone
                            alpha=0.1, color='green', label='Ideal region')
     
-    axes[1, 1].set_xlabel(f'Mean {distance_col}',
+    axes[1, 1].set_xlabel(f'Mean {distance_col} (Efficiency)',
                          fontsize=12, fontweight='bold')
     axes[1, 1].set_ylabel('Coverage Rate (Validity)',
                          fontsize=12, fontweight='bold')
     axes[1, 1].set_title('D. Coverage-Efficiency Tradeoff',
                         fontsize=13, fontweight='bold')
     axes[1, 1].set_ylim(0.7, 1.02)
-    #axes[1, 1].set_xlim(0.6, 1.02) # Focused on the confidence range
     axes[1, 1].grid(True, alpha=0.3)
     
     # Annotate best/worst
-    # Best = High coverage AND High confidence
-    #dataset_stats['score'] = dataset_stats['coverage'] * dataset_stats['mean_distance']
-    #best = dataset_stats.nlargest(annotate_top_n, 'score')
-    #worst = dataset_stats.nsmallest(annotate_top_n, 'score')
-    in_validity_zone = dataset_stats['coverage'].between(0.85, 0.95)
-    in_efficiency_zone = dataset_stats[mean_efficiency].between(.8, 1.2)
+    # Best = High coverage AND Small set size
 
-    # 2. Identify "Best" (Top-Right of the defined box)
-    # We prioritize models that satisfy both, then rank by highest confidence
-    dataset_stats['is_ideal'] = in_validity_zone & in_efficiency_zone
-    best = dataset_stats[dataset_stats['is_ideal']].nlargest(annotate_top_n, mean_efficiency)
+    dataset_stats['coverage_error'] = abs(dataset_stats['coverage'] - 0.9)
 
-    # 3. Identify "Worst" (The Outliers)
-    # We define worst as models that fail the validity floor (< 0.85) 
-    # or fall significantly below the efficiency threshold (< 0.80)
-    worst = dataset_stats[~dataset_stats['is_ideal']].nsmallest(annotate_top_n, 'coverage')
-    
+    dataset_stats['score'] = (
+        dataset_stats['coverage_error'] * 2.0 +
+        dataset_stats[mean_efficiency]
+    )
+
+    best = dataset_stats.nsmallest(annotate_top_n, 'score')
+    worst = dataset_stats.nlargest(annotate_top_n, 'score')
+
     for i, (_, row) in enumerate(best.iterrows()):
         offset_y = 15 + i * 15
         axes[1, 1].annotate(row['data'],
