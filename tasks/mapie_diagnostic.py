@@ -1547,7 +1547,8 @@ def plot_coverage_efficiency_classification(
     #axes[1, 0].set_xlim([0, 100])        
     # Conditional labeling
     if len(dataset_stats) <= 50:
-        axes[1, 0].set_yticks(range(1, len(dataset_stats) + 1))
+        # axes[1, 0].set_yticks(range(1, len(dataset_stats) + 1))
+        axes[1, 0].set_yticks(range(len(dataset_stats)))
         axes[1, 0].set_yticklabels(dataset_stats['data'], fontsize=7)
     else:
         axes[1, 0].set_ylabel(f'{dataset_label} (sorted by coverage)',
