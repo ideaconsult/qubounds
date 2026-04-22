@@ -263,6 +263,8 @@ def predict_conformal(df, pred_column, true_column=None,
         
         # Predict sigma
         sigma_pred_chunk = sigma_model.predict(X_ecfp_chunk)
+
+        # we could use mapie.predict_interval() instead ...
         
         # DIAGNOSTICS
         # Compute reference conformity scores S = |y - y_hat| / sigma_hat
