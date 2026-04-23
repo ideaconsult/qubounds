@@ -8,7 +8,8 @@ from scipy import stats
 from tasks.mapie_diagnostic import (
     plot_coverage_efficiency_classification,
     figure_spearman_classification,
-    distance_by_adi_bins_classification
+    distance_by_adi_bins_classification,
+    ADI_BIN_EDGES, ADI_BIN_LABELS
 )
 
 
@@ -29,7 +30,7 @@ ncm = "crfecfp"
 #SCORE_LABEL = "Probs Zero Difference"
 
 SCORE = "Set_Size"
-SCORE_LABEL = "Set Size"
+SCORE_LABEL = "Predicted label set size"
 
 df_models = pd.read_excel(vega_models, engine="openpyxl")
 logger = init_logging(Path(product["nb"]).parent / "logs", "plots.log")
@@ -46,9 +47,8 @@ def coverage_by_adi_bins_classification(df, alpha=0.1, save_path=None):
         save_path: Path to save figure
     """
     # Bin ADI into groups
-    df['ADI_bin'] = pd.cut(df['ADI'], bins=[0, 0.5, 0.75, 0.85, 1.0], 
-                        labels=['Very Low\n(0-0.5)', 'Low\n(0.5-0.75)', 
-                                'Moderate\n(0.75-0.85)', 'High\n(0.85-1.0)'])
+    if 'ADI_bin' not in df.columns:
+        df['ADI_bin'] = pd.cut(df['ADI'], bins=ADI_BIN_EDGES, labels=ADI_BIN_LABELS)
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
@@ -67,14 +67,14 @@ def coverage_by_adi_bins_classification(df, alpha=0.1, save_path=None):
     axes[0, 0].set_ylim(0, 1.05)
     axes[0, 0].axhline(y=1-alpha, color='red', linestyle='--', linewidth=2, 
                        label=f'Target {(1-alpha)*100:.0f}%')
-    axes[0, 0].set_xticks(range(len(coverage_by_adi)))
-    axes[0, 0].set_xticklabels(coverage_by_adi.index, rotation=0)
+    # axes[0, 0].set_xticks(range(len(coverage_by_adi)))
+    # axes[0, 0].set_xticklabels(coverage_by_adi.index)
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3, axis='y')
 
     # Add sample sizes on bars
     for i, (idx, row) in enumerate(coverage_by_adi.iterrows()):
-        axes[0, 0].text(i, row['mean'] + 0.05, f"n={row['count']}", 
+        axes[0, 0].text(i, row['mean'] + 0.05, f"n={row['count']}",
                        ha='center', fontsize=9, fontweight='bold')
 
     # === PLOT 2: Set size distribution by ADI bin ===
@@ -110,20 +110,30 @@ def coverage_by_adi_bins_classification(df, alpha=0.1, save_path=None):
     axes[1, 0].set_xticklabels(singleton_by_adi.index, rotation=0)
     axes[1, 0].grid(True, alpha=0.3, axis='y')
 
-    # === PLOT 4: Mean set size by ADI bin ===
-    mean_set_size = df.groupby('ADI_bin')['Set_Size'].agg(['mean', 'sem'])
-    
-    axes[1, 1].bar(range(len(mean_set_size)), mean_set_size['mean'],
-                   color='#2196F3', alpha=0.7, edgecolor='black')
-    axes[1, 1].errorbar(range(len(mean_set_size)), mean_set_size['mean'],
-                       yerr=1.96*mean_set_size['sem'], fmt='none',
-                       color='black', capsize=5, label='95% CI')
-    axes[1, 1].set_ylabel('Mean Set Size', fontsize=12, fontweight='bold')
+    # === PLOT 4: Probability thresholds by ADI bin ===
+    thresholds = df.groupby('ADI_bin').apply(
+        lambda x: pd.Series({
+            'P(size<1)': (x['Set_Size'] < 1).mean(),
+            'P(size=1)': (x['Set_Size'] == 1).mean(),
+            'P(size<=2)': (x['Set_Size'] <=2).mean(),
+            'P(size>=3)': (x['Set_Size'] >=3).mean(),
+        })
+    )
+
+    x = range(len(thresholds))
+
+    for col in thresholds.columns:
+        axes[1, 1].plot(x, thresholds[col], marker='o', label=col)
+
+    axes[1, 1].set_ylabel('Probability of Set size', fontsize=12, fontweight='bold')
     axes[1, 1].set_xlabel('ADI Range', fontsize=12, fontweight='bold')
-    axes[1, 1].set_title('Average Uncertainty by Domain', 
+    axes[1, 1].set_title('Set Size Probabilities by ADI',
                         fontsize=14, fontweight='bold')
-    axes[1, 1].set_xticks(range(len(mean_set_size)))
-    axes[1, 1].set_xticklabels(mean_set_size.index, rotation=0)
+
+    axes[1, 1].set_xticks(x)
+    axes[1, 1].set_xticklabels(thresholds.index, rotation=0)
+
+    axes[1, 1].set_ylim(0, 1.05)
     axes[1, 1].legend()
     axes[1, 1].grid(True, alpha=0.3, axis='y')
 
@@ -290,7 +300,10 @@ def compare_datasets_coverage(combined_df, save_path=None):
     valid_mask = df_metrics[['mean_adi', 'coverage']].notna().all(axis=1)
     if valid_mask.sum() > 2:
         rho, p = stats.spearmanr(df_metrics.loc[valid_mask, 'mean_adi'], 
-                                 df_metrics.loc[valid_mask, 'coverage'])
+                                 df_metrics.loc[valid_mask, 'Set_Size'])
+        #rho, p = stats.kendalltau(df_metrics.loc[valid_mask, 'mean_adi'], 
+        #                         df_metrics.loc[valid_mask, 'Set_Size'])        
+        
         axes[0, 1].text(0.02, 0.98, f'ρ = {rho:.3f}\np = {p:.3f}',
                        transform=axes[0, 1].transAxes, fontsize=10,
                        verticalalignment='top',
@@ -299,15 +312,12 @@ def compare_datasets_coverage(combined_df, save_path=None):
     # === PLOT 3: ===
 # === Panel 1,0: Coverage by ADI bins (split-aware) ===
 
-    adi_bin_edges = [0, 0.5, 0.75, 0.85, 1.0]
-    adi_bin_labels = ['Very Low (0-0.5)', 'Low (0.5-0.75)',
-                    'Moderate (0.75-0.85)', 'High (0.85-1.0)']
 
     # Prepare data for plotting
     df_plot = []
 
     for sp, g in combined_df.groupby('split'):
-        g['ADI_bin'] = pd.cut(g['ADI'], bins=adi_bin_edges, labels=adi_bin_labels)
+        g['ADI_bin'] = pd.cut(g['ADI'], bins=ADI_BIN_EDGES, labels=ADI_BIN_LABELS)
         cov_by_bin = g.groupby('ADI_bin')['In_Coverage'].mean().reset_index()
         cov_by_bin['split'] = sp
         df_plot.append(cov_by_bin)
@@ -316,14 +326,14 @@ def compare_datasets_coverage(combined_df, save_path=None):
 
     # Plot bars
     splits = df_plot['split'].unique()
-    x = np.arange(len(adi_bin_labels))  # positions for ADI bins
+    x = np.arange(len(ADI_BIN_LABELS))  # positions for ADI bins
     width = 0.35  # width of each split's bar
 
     axes[1, 0].cla()  # clear previous panel
 
     for i, sp in enumerate(splits):
         sub = df_plot[df_plot['split'] == sp]
-        sub = sub.set_index('ADI_bin').reindex(adi_bin_labels).reset_index()  # ensure order
+        sub = sub.set_index('ADI_bin').reindex(ADI_BIN_LABELS).reset_index()  # ensure order
         axes[1, 0].bar(
             x + i*width,
             sub['In_Coverage'],
@@ -335,7 +345,7 @@ def compare_datasets_coverage(combined_df, save_path=None):
 
     axes[1, 0].axhline(0.9, color='red', linestyle='--', linewidth=2, label='Target 90%')
     axes[1, 0].set_xticks(x + width*(len(splits)-1)/2)
-    axes[1, 0].set_xticklabels(adi_bin_labels, rotation=0)
+    axes[1, 0].set_xticklabels(ADI_BIN_LABELS, rotation=0)
     axes[1, 0].set_ylabel('Coverage Rate', fontsize=12, fontweight='bold')
     axes[1, 0].set_xlabel('ADI Range', fontsize=12, fontweight='bold')
     axes[1, 0].set_title('Coverage by ADI Range (Split-aware)', fontsize=14, fontweight='bold')
@@ -513,28 +523,49 @@ for _df in combined_rows:
 
 combined_df = pd.concat(combined_rows, ignore_index=True)
 
-# ========== NEW: SPEARMAN CORRELATION ANALYSIS (NO SPLITS) ==========
+# ========== SPEARMAN CORRELATION ANALYSIS (NO SPLITS) ==========
+# We define a continuous confidence score that equals 1 for singleton predictions 
+# and decreases smoothly as the prediction set grows. 
+# This captures how close each prediction is to being fully unambiguous.”
+
+combined_df['lac_singleton_confidence'] = np.exp(-(combined_df['Set_Size'] - 1))
+def signed_distance(s):
+    if s == 0:
+        return -1
+    return s - 1
+
+combined_df['distance_from_singleton'] = combined_df['Set_Size'].apply(signed_distance)
+combined_df['singleton_confidence'] = np.exp(-combined_df['distance_from_singleton'])
+
+
+_SCORE = SCORE
+_SCORE_LABEL = SCORE_LABEL
+
+#_SCORE = "singleton_confidence"
+#_SCORE_LABEL = "singleton_confidence"  # set size = 1
+
+_ADI_COL = "ADI"
 
 # Check if prediction distance column exists
 if SCORE in combined_df.columns:
     # Global correlation (all data pooled)
     rho, p = stats.spearmanr(
-        combined_df["ADI"],
-        combined_df[SCORE]
+        combined_df[_ADI_COL],
+        combined_df[_SCORE]
     )
-    print(f"\nGlobal Spearman ρ (ADI vs {SCORE_LABEL}) = {rho:.3f}, p = {p:.2e}")
+    print(f"\nGlobal Spearman rho (ADI vs {SCORE_LABEL}) = {rho:.3f}, p = {p:.2e}")
 
     # Hexbin plot for all data
     plt.figure(figsize=(6,5))
     plt.hexbin(
-        combined_df["ADI"],
-        combined_df[SCORE],
+        combined_df[_ADI_COL],
+        combined_df[_SCORE],
         gridsize=40,
         mincnt=1,
         cmap='YlOrRd'
     )
-    plt.xlabel("ADI", fontsize=12)
-    plt.ylabel("Score", fontsize=12)
+    plt.xlabel(_ADI_COL, fontsize=12)
+    plt.ylabel(_SCORE_LABEL, fontsize=12)
     plt.title("All datasets pooled", fontsize=13)
     plt.colorbar(label="Count")
     plt.tight_layout()
@@ -545,7 +576,7 @@ if SCORE in combined_df.columns:
     for name in combined_df['data'].unique():
         g = combined_df[combined_df['data'] == name]
         if len(g) > 10:
-            r, p = stats.spearmanr(g["ADI"], g[SCORE])
+            r, p = stats.spearmanr(g[_ADI_COL], g[_SCORE])
             rows.append({
                 "data": name,
                 "rho": r,
@@ -558,10 +589,10 @@ if SCORE in combined_df.columns:
 
     # Interpretation note
     print("Interpretation:")
-    print(f"Spearman ρ measures monotonic relationship between ADI and {SCORE_LABEL}.")
+    print(f"Spearman ρ measures monotonic relationship between ADI and {_SCORE_LABEL}.")
     print("For classification:")
-    print(f"  - Positive ρ: Higher ADI → Higher {SCORE_LABEL}")
-    print(f"  - Negative ρ: Higher ADI → Lower {SCORE_LABEL}")
+    print(f"  - Positive ρ: Higher ADI → Higher {_SCORE_LABEL}")
+    print(f"  - Negative ρ: Higher ADI → Lower {_SCORE_LABEL}")
     print("  - ρ ≈ 0: No clear monotonic relationship")
 
     # Small multiples (4 most extreme correlations)
@@ -569,10 +600,10 @@ if SCORE in combined_df.columns:
     for name in corr_df.sort_values("rho", key=abs).tail(4)["data"]:
         g = combined_df[combined_df["data"]==name]
         plt.figure(figsize=(3,3))
-        plt.scatter(g["ADI"], g[SCORE], s=8, alpha=0.4)
+        plt.scatter(g[_ADI_COL], g[_SCORE], s=8, alpha=0.4)
         plt.title(name, fontsize=10)
-        plt.xlabel("ADI", fontsize=9)
-        plt.ylabel(SCORE_LABEL, fontsize=9)
+        plt.xlabel(_ADI_COL, fontsize=9)
+        plt.ylabel(_SCORE_LABEL, fontsize=9)
         plt.tight_layout()
         plt.show()
 
@@ -582,30 +613,34 @@ if SCORE in combined_df.columns:
     # Generate Spearman figure (matching regression style)
     figure_spearman_classification(
         corr_df, 
-        score_col_label=SCORE_LABEL,
+        score_col_label=_SCORE_LABEL,
         save_path=product["plot"]
     )
     # Generate ADI bins analysis (matching regression style)
     distance_by_adi_bins_classification(
         combined_df,
-        distance_col=SCORE, 
-        distance_label=SCORE_LABEL,
+        distance_col=_SCORE, 
+        distance_label=_SCORE_LABEL,
         save_path=product["plot"].replace("spearman", "adi_bins_distance")
     )
 else:
-    print(f"\nWarning: {SCORE} column not found. Skipping correlation analysis.")
+    print(f"\nWarning: {_SCORE} column not found. Skipping correlation analysis.")
 
-# ========== EXISTING VISUALIZATIONS (KEEP AS IS) ==========
+# ========== EXISTING VISUALIZATIONS  ==========
 
 # Original coverage by ADI bins
 HTML("<h3>Coverage and Uncertainty Stratified by Applicability Domain (ADI)</h3>") 
 HTML("<p>Empirical coverage rate, prediction set size, and efficiency as a function of applicability domain index (ADI).</p>")
-coverage_by_adi_bins_classification(combined_df, 
-                                    alpha=0.1, save_path=product["plot"].replace("spearman","coverage_by_adi_bins"))
+
+combined_df['ADI_bin'] = pd.cut(
+    combined_df['ADI'], bins=ADI_BIN_EDGES, labels=ADI_BIN_LABELS)
+coverage_by_adi_bins_classification(
+    combined_df, alpha=0.1,
+    save_path=product["plot"].replace("spearman", "coverage_by_adi_bins"))
 
 # Coverage efficiency plot (UNCHANGED)
-print(combined_df[SCORE].dtype)
-print(combined_df[SCORE].head())
+print(combined_df[_SCORE].dtype)
+print(combined_df[_SCORE].head())
 
 dataset_stats = plot_coverage_efficiency_classification(
     combined_df,
@@ -616,9 +651,9 @@ dataset_stats = plot_coverage_efficiency_classification(
     annotate_top_n=3
 )
 
-dataset_stats.rename(columns={"mean_distance": f"mean_{SCORE}",
-                              "median_distance": f"median_{SCORE}",
-                              "std_distance": f"std_{SCORE}"}
+dataset_stats.rename(columns={"mean_distance": f"mean_{_SCORE}",
+                              "median_distance": f"median_{_SCORE}",
+                              "std_distance": f"std_{_SCORE}"}
                               )
 # Export
 dataset_stats.to_excel(

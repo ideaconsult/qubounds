@@ -14,11 +14,15 @@ from mord import LogisticAT, LAD  # or LogisticIT, LogisticSE
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
 from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
 import pandas as pd
-from scipy.stats import spearmanr
+from scipy.stats import spearmanr, kendalltau
 import matplotlib.pyplot as plt
 
 
 logger = logging.getLogger(__name__)
+
+ADI_BIN_EDGES = [0, 0.5, 0.75, 0.85, 1.0]
+ADI_BIN_LABELS = ['Very Low (0-0.5)', 'Low (0.5-0.75)',
+                'Moderate (0.75-0.85)', 'High (0.85-1.0)']
 
 
 def compute_normalized_conformity_scores(y_true, y_pred, sigma_pred):
@@ -1512,21 +1516,7 @@ def plot_coverage_efficiency_classification(
                    verticalalignment='bottom',
                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     
-    # ========== PANEL C: Prediction Distance Distribution ==========
-    # Boxplots of distance by dataset
-    """
-    data_for_box = [combined_df[combined_df['data'] == d][distance_col].values
-                    for d in dataset_stats['data']]
-    
-    bp = axes[1, 0].boxplot(data_for_box, patch_artist=True,
-                        showfliers=False, vert=False)
-    
-    for patch in bp['boxes']:
-        patch.set_facecolor('#2196F3')
-        patch.set_alpha(0.6)
-    """
-
-    # Panel: Set Size Distribution
+    # ========== PANEL C: Set size Distribution ==========
     grouped = combined_df.groupby(['data', distance_col]).size().unstack(fill_value=0)
     grouped_pct = grouped.div(grouped.sum(axis=1), axis=0) * 100
 
@@ -1534,16 +1524,17 @@ def plot_coverage_efficiency_classification(
         kind='barh',
         stacked=True,
         ax=axes[1, 0],
-        cmap='RdYlGn_r',  # Red (size=1) to green (larger sets)
+        #cmap='RdYlGn_r',  # Red (size=1) to green (larger sets)
+        cmap='Spectral_r',
         edgecolor='black',
         linewidth=0.5,
         width=0.8
     )
 
-    axes[1, 0].set_xlabel('Set size percentage (%)', fontweight='bold')
+    axes[1, 0].set_xlabel(f'{distance_label} percentage (%)', fontweight='bold')
     axes[1, 0].set_ylabel('')
-    axes[1, 0].set_title('Set Size Distribution', fontweight='bold')
-    axes[1, 0].legend(title='Set Size', bbox_to_anchor=(1.02, 0.5), loc='center left', ncol=1)
+    axes[1, 0].set_title(f'{distance_label} Distribution', fontweight='bold')
+    axes[1, 0].legend(title=distance_label.replace(" ","\n"), bbox_to_anchor=(1.02, 0.5), loc='center left', ncol=1)
     #axes[1, 0].set_xlim([0, 100])        
     # Conditional labeling
     if len(dataset_stats) <= 50:
@@ -1554,17 +1545,11 @@ def plot_coverage_efficiency_classification(
         axes[1, 0].set_ylabel(f'{dataset_label} (sorted by coverage)',
                             fontsize=12, fontweight='bold')
         axes[1, 0].set_yticks([])
-    
 
     axes[1, 0].set_xlim(0, None)    
-    # axes[1, 0]..autoscale(enable=True, axis='x', tight=False)
-    #     
-    #axes[1, 0].set_xlabel(distance_label, fontsize=12, fontweight='bold')
     axes[1, 0].set_title(f'C. {distance_label} by {dataset_label}',
                         fontsize=13, fontweight='bold')
     axes[1, 0].grid(True, alpha=0.3, axis='x')
-    
-    # Add statistics
     axes[1, 0].text(0.98, 0.98,
                 f'Overall:\n'
                 f'Mean: {combined_df[distance_col].mean():.3f}\n'
@@ -1572,14 +1557,11 @@ def plot_coverage_efficiency_classification(
                 transform=axes[1, 0].transAxes, fontsize=9,
                 verticalalignment='top', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
-#    except Exception as x:
-#        print(x)
-# ========== PANEL D: Coverage-Efficiency Tradeoff  ==========
-    # Higher Confidence = more certain (better)
-    # Target: High coverage (Validity) + High Confidence = Top-Right
-    
-    sizes = np.sqrt(dataset_stats['n']) * 2
 
+# ========== PANEL D: Coverage-Efficiency Tradeoff  ==========
+    # Target: High coverage (Validity) + High ЕEfficiencty (singletons) = Top-Right
+  
+    sizes = np.sqrt(dataset_stats['n']) * 2
     scatter = axes[1, 1].scatter(dataset_stats[mean_efficiency], # Changed from distance
                                 dataset_stats['coverage'],
                                 s=sizes, alpha=0.6, c=colors_coverage,
@@ -1593,9 +1575,9 @@ def plot_coverage_efficiency_classification(
     axes[1, 1].axvline(x=median_conf, color='blue', linestyle='--',
                       linewidth=1.5, alpha=0.5, label=f'Median {distance_col}')
     
-    # Ideal region: high coverage + high confidence (Top-Right)
+    # Ideal region: high coverage + singletons (Top-Left)
     # x-range: from median/high threshold to 1.0
-    axes[1, 1].fill_between([0.8, 1.2], 0.85, .95, # High-confidence zone
+    axes[1, 1].fill_between([0.8, 1.2], 0.85, .95, 
                            alpha=0.1, color='green', label='Ideal region')
     
     axes[1, 1].set_xlabel(f'Mean {distance_col} (Efficiency)',
@@ -1609,9 +1591,7 @@ def plot_coverage_efficiency_classification(
     
     # Annotate best/worst
     # Best = High coverage AND Small set size
-
     dataset_stats['coverage_error'] = abs(dataset_stats['coverage'] - 0.9)
-
     dataset_stats['score'] = (
         dataset_stats['coverage_error'] * 2.0 +
         dataset_stats[mean_efficiency]
@@ -1666,7 +1646,7 @@ def plot_coverage_efficiency_classification(
     
     # Print summary
     print("\n" + "="*70)
-    print("CLASSIFICATION COVERAGE AND SET SIZE SUMMARY")
+    print(f"CLASSIFICATION COVERAGE AND {distance_label} SUMMARY")
     print("="*70)
     print(f"\nDatasets analyzed: {len(dataset_stats)}")
     print(f"\nCoverage Statistics:")
@@ -1700,7 +1680,7 @@ def plot_coverage_efficiency_classification(
 
 def figure_spearman_classification(df, score_col_label="Score", save_path=None):
     """
-    Spearman correlation analysis for classification: ADI vs score.
+    Kendal τ correlation analysis for classification: ADI vs score.
     Mirrors the regression version but uses prediction distance instead of interval width.
     
     Args:
@@ -1731,7 +1711,7 @@ def figure_spearman_classification(df, score_col_label="Score", save_path=None):
     ax1.axvline(x=0, color='black', linestyle='-', linewidth=1.5)
     ax1.set_yticks(y_pos)
     ax1.set_yticklabels(df_sorted['data'], fontsize=9)
-    ax1.set_xlabel('Spearman ρ', fontsize=12)
+    ax1.set_xlabel('Spearman p', fontsize=12)
     ax1.set_title(f'ADI vs {score_col_label} Correlation\n(Sorted by Strength)', 
                 fontsize=12, pad=10)
     ax1.grid(axis='x', alpha=0.3, linestyle='--')
@@ -1751,9 +1731,9 @@ def figure_spearman_classification(df, score_col_label="Score", save_path=None):
     ax2.scatter(df_sorted['rho'], df_sorted['n'], c=colors, s=100, 
                 alpha=0.7, edgecolor='black', linewidth=1)
     ax2.axvline(x=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
-    ax2.set_xlabel('Spearman ρ', fontsize=12, fontweight='bold')
+    ax2.set_xlabel('Spearman p', fontsize=12, fontweight='bold')
     ax2.set_ylabel('Dataset Size (n)', fontsize=12, fontweight='bold')
-    ax2.set_title('Correlation Strength vs Dataset Size', 
+    ax2.set_title(f'{score_col_label} vs Dataset Size', 
                 fontsize=12, pad=10)
     ax2.grid(True, alpha=0.3, linestyle='--')
     ax2.set_yscale('log')
@@ -1778,8 +1758,8 @@ def figure_spearman_classification(df, score_col_label="Score", save_path=None):
 
     # Print summary statistics
     print("\n=== Summary Statistics ===")
-    print(f"Mean ρ: {df['rho'].mean():.3f}")
-    print(f"Median ρ: {df['rho'].median():.3f}")
+    print(f"Mean τ: {df['rho'].mean():.3f}")
+    print(f"Median τ: {df['rho'].median():.3f}")
     print(f"Range: [{df['rho'].min():.3f}, {df['rho'].max():.3f}]")
     print(f"\nSignificant correlations (p < 0.05): {(df['p'] < 0.05).sum()}/{len(df)}")
     print(f"Highly significant (p < 0.001): {(df['p'] < 0.001).sum()}/{len(df)}")
@@ -1806,20 +1786,20 @@ def distance_by_adi_bins_classification(
         save_path: Path to save figure
     """
     # Bin ADI into groups
-    df['ADI_bin'] = pd.cut(df['ADI'], bins=[0, 0.5, 0.75, 0.85, 1.0], 
-                        labels=['Very Low\n(0-0.5)', 'Low\n(0.5-0.75)', 
-                                'Moderate\n(0.75-0.85)', 'High\n(0.85-1.0)'])
+    df['ADI_bin'] = pd.cut(df['ADI'], bins=ADI_BIN_EDGES, 
+                        labels=ADI_BIN_LABELS)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
     # === PLOT 1: Coverage rate by ADI bin ===
     coverage_by_adi = df.groupby('ADI_bin')['In_Coverage'].agg(['mean', 'count'])
     coverage_by_adi['mean'].plot(kind='bar', ax=ax1, color='#2E7D32', alpha=0.7, edgecolor='black')
     ax1.set_ylabel('Coverage Rate', fontsize=12, fontweight='bold')
     ax1.set_xlabel('ADI Range', fontsize=12, fontweight='bold')
-    ax1.set_title('Coverage Rate by Applicability Domain', fontsize=14, fontweight='bold')
+    ax1.set_title('Coverage Rate by Applicability Domain Index', fontsize=12, fontweight='bold')
     ax1.set_ylim(0, 1.05)
     ax1.axhline(y=0.9, color='red', linestyle='--', linewidth=2, label='Target 90%')
+    plt.setp(ax1.xaxis.get_majorticklabels(), rotation=0)
     ax1.legend()
     ax1.grid(True, alpha=0.3, axis='y')
 
@@ -1829,13 +1809,30 @@ def distance_by_adi_bins_classification(
                 ha='center', fontsize=9, fontweight='bold')
 
     # === PLOT 2: Prediction distance by ADI bin ===
-    df.boxplot(column=distance_col, by='ADI_bin', ax=ax2, patch_artist=True)
-    ax2.set_ylabel(distance_label, fontsize=12, fontweight='bold')
+    ct = (
+        df.groupby(['ADI_bin', distance_col])
+        .size()
+        .unstack(fill_value=0)
+    )
+    ct = ct.div(ct.sum(axis=1), axis=0) * 100
+    ct.plot(
+        kind='bar',
+        stacked=True,
+        ax=ax2,
+        # cmap='RdYlGn_r',  # Red (size=1) to green (larger sets)
+        cmap='Spectral_r',
+        edgecolor='black',
+        linewidth=0.5,
+        width=0.8
+    )    
+    ax2.set_ylabel("Percentage", fontsize=12, fontweight='bold')
     ax2.set_xlabel('ADI Range', fontsize=12, fontweight='bold')
-    ax2.set_title(f'{distance_label} by Applicability Domain', fontsize=14, fontweight='bold')
-    ax2.get_figure().suptitle('')  # Remove auto-title from boxplot
+    ax2.legend(title=distance_label.replace(" ","\n"))
+    ax2.grid(axis='y', alpha=0.3)     
+    ax2.set_title(f'Distribution of predicted label set sizes by ADI', fontsize=12, fontweight='bold')
+    ax2.get_figure().suptitle('')     
     plt.setp(ax2.xaxis.get_majorticklabels(), rotation=0)
-
+    
     plt.tight_layout()
     if save_path is not None:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
