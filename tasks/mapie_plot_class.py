@@ -439,9 +439,8 @@ def print_classification_summary(combined_df):
         print(f"\n{'ADI STRATIFIED ANALYSIS':^70}")
         print("-"*70)
         
-        adi_bins = pd.cut(combined_df['ADI'], bins=[0, 0.5, 0.75, 0.85, 1.0],
-                         labels=['Very Low (0-0.5)', 'Low (0.5-0.75)', 
-                                'Moderate (0.75-0.85)', 'High (0.85-1.0)'])
+        adi_bins = pd.cut(combined_df['ADI'], bins=ADI_BIN_EDGES,
+                         labels=ADI_BIN_LABELS)
         
         adi_analysis = combined_df.groupby(['split', adi_bins]).agg({
             'In_Coverage':['mean','count'],
@@ -528,15 +527,9 @@ combined_df = pd.concat(combined_rows, ignore_index=True)
 # and decreases smoothly as the prediction set grows. 
 # This captures how close each prediction is to being fully unambiguous.”
 
-combined_df['lac_singleton_confidence'] = np.exp(-(combined_df['Set_Size'] - 1))
-def signed_distance(s):
-    if s == 0:
-        return -1
-    return s - 1
 
-combined_df['distance_from_singleton'] = combined_df['Set_Size'].apply(signed_distance)
-combined_df['singleton_confidence'] = np.exp(-combined_df['distance_from_singleton'])
-
+combined_df['ADI_bin'] = pd.cut(
+    combined_df['ADI'], bins=ADI_BIN_EDGES, labels=ADI_BIN_LABELS)
 
 _SCORE = SCORE
 _SCORE_LABEL = SCORE_LABEL
@@ -547,7 +540,7 @@ _SCORE_LABEL = SCORE_LABEL
 _ADI_COL = "ADI"
 
 # Check if prediction distance column exists
-if SCORE in combined_df.columns:
+if _SCORE in combined_df.columns:
     # Global correlation (all data pooled)
     rho, p = stats.spearmanr(
         combined_df[_ADI_COL],
@@ -574,16 +567,19 @@ if SCORE in combined_df.columns:
     # Per-dataset correlation analysis (NO SPLIT GROUPING)
     rows = []
     for name in combined_df['data'].unique():
-        g = combined_df[combined_df['data'] == name]
+        g = combined_df[combined_df['data'] == name].dropna(subset=[_ADI_COL, _SCORE])
+
         if len(g) > 10:
-            r, p = stats.spearmanr(g[_ADI_COL], g[_SCORE])
+            # --- Spearman (monotonic association)
+            #rho, p = stats.spearmanr(g[_ADI_COL], g[_SCORE])
+            rho, p = stats.kendalltau(g[_ADI_COL], g[_SCORE], variant="b")
             rows.append({
                 "data": name,
-                "rho": r,
+                "rho": rho,
                 "p": p,
                 "n": len(g)
             })
-    
+
     corr_df = pd.DataFrame(rows).sort_values("rho")
     display(corr_df)
 
@@ -596,8 +592,8 @@ if SCORE in combined_df.columns:
     print("  - ρ ≈ 0: No clear monotonic relationship")
 
     # Small multiples (4 most extreme correlations)
-    print("\nShowing 4 datasets with strongest correlations:")
-    for name in corr_df.sort_values("rho", key=abs).tail(4)["data"]:
+    print("\nShowing 6 datasets with strongest correlations:")
+    for name in corr_df.sort_values("rho", key=abs).tail(6)["data"]:
         g = combined_df[combined_df["data"]==name]
         plt.figure(figsize=(3,3))
         plt.scatter(g[_ADI_COL], g[_SCORE], s=8, alpha=0.4)
@@ -614,8 +610,12 @@ if SCORE in combined_df.columns:
     figure_spearman_classification(
         corr_df, 
         score_col_label=_SCORE_LABEL,
-        save_path=product["plot"]
+        corr_label="rho",
+        corr_title="Kendall tau=b",
+        save_path=product["plot"],
     )
+
+    
     # Generate ADI bins analysis (matching regression style)
     distance_by_adi_bins_classification(
         combined_df,
@@ -632,8 +632,7 @@ else:
 HTML("<h3>Coverage and Uncertainty Stratified by Applicability Domain (ADI)</h3>") 
 HTML("<p>Empirical coverage rate, prediction set size, and efficiency as a function of applicability domain index (ADI).</p>")
 
-combined_df['ADI_bin'] = pd.cut(
-    combined_df['ADI'], bins=ADI_BIN_EDGES, labels=ADI_BIN_LABELS)
+
 coverage_by_adi_bins_classification(
     combined_df, alpha=0.1,
     save_path=product["plot"].replace("spearman", "coverage_by_adi_bins"))

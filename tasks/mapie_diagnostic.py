@@ -16,6 +16,7 @@ from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
 import pandas as pd
 from scipy.stats import spearmanr, kendalltau
 import matplotlib.pyplot as plt
+from IPython.display import display, Markdown, HTML
 
 
 logger = logging.getLogger(__name__)
@@ -1420,19 +1421,34 @@ def plot_coverage_efficiency_classification(
     if distance_label is None:
         distance_label = distance_col
     # Calculate per-dataset statistics (aggregating all data together)
+    """
     dataset_stats = combined_df.groupby('data').agg({
         'In_Coverage': ['mean', 'count'],
         distance_col: ['mean', 'median', 'std'],
-        'ADI': 'mean'
+        'ADI': 'mean',
+        "efficiency": (distance_col, lambda x: (x == 1).mean()),
     }).reset_index()
+    """
+    dataset_stats = combined_df.groupby('data').agg(
+        coverage=('In_Coverage', 'mean'),
+        n=('In_Coverage', 'count'),
+        mean_distance=(distance_col, 'mean'),
+        median_distance=(distance_col, 'median'),
+        std_distance=(distance_col, 'std'),
+        mean_adi=('ADI', 'mean'),
+        singleton_percentage=(distance_col, lambda x: (x == 1).mean()*100)
+    ).reset_index()
 
-    print(distance_col)
-    mean_efficiency = f"mean_{distance_col}"
+    #mean_efficiency = f"mean_{distance_col}"
+    
+    mean_efficiency = "singleton_percentage"
     
     dataset_stats.columns = ['data', 'coverage', 'n', 
-                            mean_efficiency, 'median_distance', 'std_distance', 'mean_adi']
-    dataset_stats = dataset_stats.sort_values('coverage')
+                            "mean_distance", 'median_distance', 'std_distance', 'mean_adi', "singleton_percentage"]
+    dataset_stats = dataset_stats.sort_values('coverage').reset_index()
     
+    display(dataset_stats[["data", "coverage"]].head(10))
+
     fig, axes = plt.subplots(2, 2, figsize=(14, 12))
     
     # ========== PANEL A: Coverage by Dataset ==========
@@ -1465,8 +1481,8 @@ def plot_coverage_efficiency_classification(
                             fontsize=11, fontweight='bold')
     else:
         # Only if 20 or fewer, show all labels
-        axes[0, 0].set_yticks(y_pos)
-        axes[0, 0].set_yticklabels(dataset_stats['data'], fontsize=8)
+        #axes[0, 0].set_yticks(y_pos)
+        axes[0, 0].set_yticklabels(dataset_stats['data'], fontsize=7)
 
     # Summary stats - move to upper left to avoid blocking bars
     n_good = sum((0.85 <= cov <= 0.95) for cov in dataset_stats['coverage'])
@@ -1519,6 +1535,8 @@ def plot_coverage_efficiency_classification(
     # ========== PANEL C: Set size Distribution ==========
     grouped = combined_df.groupby(['data', distance_col]).size().unstack(fill_value=0)
     grouped_pct = grouped.div(grouped.sum(axis=1), axis=0) * 100
+    # Reorder grouped_pct to match dataset_stats
+    grouped_pct = grouped_pct.loc[dataset_stats['data']]
 
     grouped_pct.plot(
         kind='barh',
@@ -1531,19 +1549,17 @@ def plot_coverage_efficiency_classification(
         width=0.8
     )
 
-    axes[1, 0].set_xlabel(f'{distance_label} percentage (%)', fontweight='bold')
+    axes[1, 0].set_xlabel(f'{distance_label} percentage (%)',   fontsize=12, fontweight='bold')
     axes[1, 0].set_ylabel('')
     axes[1, 0].set_title(f'{distance_label} Distribution', fontweight='bold')
     axes[1, 0].legend(title=distance_label.replace(" ","\n"), bbox_to_anchor=(1.02, 0.5), loc='center left', ncol=1)
     #axes[1, 0].set_xlim([0, 100])        
-    # Conditional labeling
+
     if len(dataset_stats) <= 50:
-        # axes[1, 0].set_yticks(range(1, len(dataset_stats) + 1))
-        axes[1, 0].set_yticks(range(len(dataset_stats)))
         axes[1, 0].set_yticklabels(dataset_stats['data'], fontsize=7)
     else:
         axes[1, 0].set_ylabel(f'{dataset_label} (sorted by coverage)',
-                            fontsize=12, fontweight='bold')
+                            fontsize=11, fontweight='bold')
         axes[1, 0].set_yticks([])
 
     axes[1, 0].set_xlim(0, None)    
@@ -1573,32 +1589,31 @@ def plot_coverage_efficiency_classification(
     
     median_conf = dataset_stats[mean_efficiency].median()
     axes[1, 1].axvline(x=median_conf, color='blue', linestyle='--',
-                      linewidth=1.5, alpha=0.5, label=f'Median {distance_col}')
+                      linewidth=1.5, alpha=0.5, label=f'Median singleton percentage')
     
-    # Ideal region: high coverage + singletons (Top-Left)
+    # Ideal region: high coverage + singletons around 100%
     # x-range: from median/high threshold to 1.0
-    axes[1, 1].fill_between([0.8, 1.2], 0.85, .95, 
+    axes[1, 1].fill_between([80, 100], 0.85, .95, 
                            alpha=0.1, color='green', label='Ideal region')
     
-    axes[1, 1].set_xlabel(f'Mean {distance_col} (Efficiency)',
+    axes[1, 1].set_xlabel(f'Singleton percentage % (Efficiency)',
                          fontsize=12, fontweight='bold')
     axes[1, 1].set_ylabel('Coverage Rate (Validity)',
                          fontsize=12, fontweight='bold')
     axes[1, 1].set_title('D. Coverage-Efficiency Tradeoff',
                         fontsize=13, fontweight='bold')
-    axes[1, 1].set_ylim(0.7, 1.02)
+    #axes[1, 1].set_ylim(0, 1.02)
     axes[1, 1].grid(True, alpha=0.3)
     
     # Annotate best/worst
-    # Best = High coverage AND Small set size
-    dataset_stats['coverage_error'] = abs(dataset_stats['coverage'] - 0.9)
+    # Best = High coverage AND High singletons percentage
     dataset_stats['score'] = (
-        dataset_stats['coverage_error'] * 2.0 +
-        dataset_stats[mean_efficiency]
+        - (dataset_stats['coverage'] - 0.9).abs()
+        + dataset_stats[mean_efficiency] / 100
     )
 
-    best = dataset_stats.nsmallest(annotate_top_n, 'score')
-    worst = dataset_stats.nlargest(annotate_top_n, 'score')
+    worst = dataset_stats.nsmallest(annotate_top_n, 'score')
+    best = dataset_stats.nlargest(annotate_top_n, 'score')
 
     for i, (_, row) in enumerate(best.iterrows()):
         offset_y = 15 + i * 15
@@ -1678,7 +1693,9 @@ def plot_coverage_efficiency_classification(
     return dataset_stats
 
 
-def figure_spearman_classification(df, score_col_label="Score", save_path=None):
+def figure_spearman_classification(
+        df, score_col_label="Score", 
+        corr_label="rho", corr_title="Spearman p", save_path=None):
     """
     Kendal τ correlation analysis for classification: ADI vs score.
     Mirrors the regression version but uses prediction distance instead of interval width.
@@ -1689,7 +1706,7 @@ def figure_spearman_classification(df, score_col_label="Score", save_path=None):
         save_path: Path to save figure
     """
     # Sort by correlation strength
-    df_sorted = df.sort_values('rho').reset_index(drop=True)
+    df_sorted = df.sort_values(corr_label).reset_index(drop=True)
 
     # Assign colors based on p-value significance
     colors = []
@@ -1706,12 +1723,12 @@ def figure_spearman_classification(df, score_col_label="Score", save_path=None):
 
     # === PLOT 1: Correlation bars ===
     y_pos = np.arange(len(df_sorted))
-    ax1.barh(y_pos, df_sorted['rho'], color=colors, alpha=0.8, 
+    ax1.barh(y_pos, df_sorted[corr_label], color=colors, alpha=0.8, 
             edgecolor='black', linewidth=0.5)
     ax1.axvline(x=0, color='black', linestyle='-', linewidth=1.5)
     ax1.set_yticks(y_pos)
-    ax1.set_yticklabels(df_sorted['data'], fontsize=9)
-    ax1.set_xlabel('Spearman p', fontsize=12)
+    ax1.set_yticklabels(df_sorted['data'], fontsize=7)
+    ax1.set_xlabel(corr_title, fontsize=12)
     ax1.set_title(f'ADI vs {score_col_label} Correlation\n(Sorted by Strength)', 
                 fontsize=12, pad=10)
     ax1.grid(axis='x', alpha=0.3, linestyle='--')
@@ -1728,10 +1745,10 @@ def figure_spearman_classification(df, score_col_label="Score", save_path=None):
     ax1.legend(handles=legend_elements, loc='best', fontsize=10)
 
     # === PLOT 2: Scatter plot with dataset size ===
-    ax2.scatter(df_sorted['rho'], df_sorted['n'], c=colors, s=100, 
+    ax2.scatter(df_sorted[corr_label], df_sorted['n'], c=colors, s=100, 
                 alpha=0.7, edgecolor='black', linewidth=1)
     ax2.axvline(x=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
-    ax2.set_xlabel('Spearman p', fontsize=12, fontweight='bold')
+    ax2.set_xlabel(corr_title, fontsize=12, fontweight='bold')
     ax2.set_ylabel('Dataset Size (n)', fontsize=12, fontweight='bold')
     ax2.set_title(f'{score_col_label} vs Dataset Size', 
                 fontsize=12, pad=10)
@@ -1742,7 +1759,7 @@ def figure_spearman_classification(df, score_col_label="Score", save_path=None):
     top_n = df_sorted.nlargest(3, 'n')
     for _, row in top_n.iterrows():
         ax2.annotate(row['data'], 
-                    xy=(row['rho'], row['n']), 
+                    xy=(row[corr_label], row['n']), 
                     xytext=(10, 10), 
                     textcoords='offset points',
                     fontsize=8, 
@@ -1758,18 +1775,18 @@ def figure_spearman_classification(df, score_col_label="Score", save_path=None):
 
     # Print summary statistics
     print("\n=== Summary Statistics ===")
-    print(f"Mean τ: {df['rho'].mean():.3f}")
-    print(f"Median τ: {df['rho'].median():.3f}")
-    print(f"Range: [{df['rho'].min():.3f}, {df['rho'].max():.3f}]")
+    print(f"Mean τ: {df[corr_label].mean():.3f}")
+    print(f"Median τ: {df[corr_label].median():.3f}")
+    print(f"Range: [{df[corr_label].min():.3f}, {df[corr_label].max():.3f}]")
     print(f"\nSignificant correlations (p < 0.05): {(df['p'] < 0.05).sum()}/{len(df)}")
     print(f"Highly significant (p < 0.001): {(df['p'] < 0.001).sum()}/{len(df)}")
-    print(f"\nNegative correlations: {(df['rho'] < 0).sum()}/{len(df)}")
-    print(f"Positive correlations: {(df['rho'] > 0).sum()}/{len(df)}")
+    print(f"\nNegative correlations: {(df[corr_label] < 0).sum()}/{len(df)}")
+    print(f"Positive correlations: {(df[corr_label] > 0).sum()}/{len(df)}")
     print(f"\nDataset size range: {df['n'].min()} to {df['n'].max()}")
     print(f"Median dataset size: {df['n'].median():.0f}")
 
     # Check if dataset size correlates with correlation strength
-    size_rho_corr = df['n'].corr(df['rho'], method='spearman')
+    size_rho_corr = df['n'].corr(df[corr_label], method='spearman')
     print(f"\nCorrelation between dataset size and ρ: {size_rho_corr:.3f}")
     print("(Does larger n lead to stronger/weaker correlations?)")
 
@@ -1853,3 +1870,4 @@ class ShapeSafeLGBMClassifier(LGBMClassifier):
         if probas.ndim == 1:
             return np.vstack([1 - probas, probas]).T
         return probas    
+    
