@@ -1404,15 +1404,15 @@ def plot_coverage_efficiency_analysis(combined_df, save_path=None,
 def plot_coverage_efficiency_classification(
         combined_df, distance_col, distance_label=None, 
         dataset_label="Model",
-        save_path=None, max_labels_panel_a=20, annotate_top_n=3
+        save_path=None, max_labels_panel_a=50, annotate_top_n=3
                                            ):
     """
     Four-panel coverage and efficiency analysis for classification.
     Uses prediction distance as efficiency metric (lower = more certain).
     
     Args:
-        combined_df: DataFrame with ['data', 'In_Coverage', 'ADI', distance_col]
-        distance_col: Name of prediction distance column (e.g., 'ALGAE_COMBASECLASS_probs_distance')
+        combined_df: DataFrame with ['data', 'In_Coverage', 'ADI', distance_col, 'Set_Size']
+        distance_col: Name of prediction distance column - now we use Set_Size
         save_path: Path to save figure
         max_labels_panel_a: Maximum labels in Panel A
         annotate_top_n: Number to annotate in Panel D
@@ -1555,7 +1555,7 @@ def plot_coverage_efficiency_classification(
     axes[1, 0].legend(title=distance_label.replace(" ","\n"), bbox_to_anchor=(1.02, 0.5), loc='center left', ncol=1)
     #axes[1, 0].set_xlim([0, 100])        
 
-    if len(dataset_stats) <= 50:
+    if len(dataset_stats) <= max_labels_panel_a:
         axes[1, 0].set_yticklabels(dataset_stats['data'], fontsize=7)
     else:
         axes[1, 0].set_ylabel(f'{dataset_label} (sorted by coverage)',
@@ -1567,7 +1567,7 @@ def plot_coverage_efficiency_classification(
                         fontsize=13, fontweight='bold')
     axes[1, 0].grid(True, alpha=0.3, axis='x')
     axes[1, 0].text(0.98, 0.98,
-                f'Overall:\n'
+                f'Label set size:\n'
                 f'Mean: {combined_df[distance_col].mean():.3f}\n'
                 f'Median: {combined_df[distance_col].median():.3f}',
                 transform=axes[1, 0].transAxes, fontsize=9,
@@ -1694,48 +1694,47 @@ def plot_coverage_efficiency_classification(
 
 
 def figure_spearman_classification(
-        df, score_col_label="Score", 
-        corr_label="rho", corr_title="Spearman p", save_path=None):
+        df, score_col_label="Score",
+        corr_label="rho", corr_title="Spearman ρ", save_path=None):
     """
-    Kendal τ correlation analysis for classification: ADI vs score.
-    Mirrors the regression version but uses prediction distance instead of interval width.
-    
-    Args:
-        df: DataFrame with correlation results per dataset
+    Kendall τ-b correlation analysis for classification: ADI vs singleton indicator.
+    Mirrors the regression version structure (two panels, one correlation bar chart,
+    one scatter). Panel B uses singleton_rate on x-axis if available, else n.
 
+    Args:
+        df: DataFrame with columns [corr_label, 'p', 'n', optionally 'singleton_rate']
+        score_col_label: Human-readable label for the score
+        corr_label: Column name for the correlation coefficient
+        corr_title: X-axis label for the correlation
         save_path: Path to save figure
     """
-    # Sort by correlation strength
     df_sorted = df.sort_values(corr_label).reset_index(drop=True)
 
-    # Assign colors based on p-value significance
+    # Colors by p-value significance
     colors = []
     for p in df_sorted['p']:
         if p < 0.001:
-            colors.append('#2E7D32')  # Dark green - highly significant
+            colors.append('#2E7D32')   # dark green – highly significant
         elif p < 0.05:
-            colors.append('#FFA726')  # Orange - significant
+            colors.append('#FFA726')   # orange – significant
         else:
-            colors.append('#D32F2F')  # Red - not significant
+            colors.append('#D32F2F')   # red – not significant
 
-    # Create figure with two subplots
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 14))
 
-    # === PLOT 1: Correlation bars ===
+    # === PANEL 1: Correlation bars (unchanged from original) ===
     y_pos = np.arange(len(df_sorted))
-    ax1.barh(y_pos, df_sorted[corr_label], color=colors, alpha=0.8, 
-            edgecolor='black', linewidth=0.5)
+    ax1.barh(y_pos, df_sorted[corr_label], color=colors, alpha=0.8,
+             edgecolor='black', linewidth=0.5)
     ax1.axvline(x=0, color='black', linestyle='-', linewidth=1.5)
     ax1.set_yticks(y_pos)
     ax1.set_yticklabels(df_sorted['data'], fontsize=7)
     ax1.set_xlabel(corr_title, fontsize=12)
-    ax1.set_title(f'ADI vs {score_col_label} Correlation\n(Sorted by Strength)', 
-                fontsize=12, pad=10)
+    ax1.set_title(
+        f'ADI vs {score_col_label} Correlation\n(Sorted by Strength)',
+        fontsize=12, pad=10)
     ax1.grid(axis='x', alpha=0.3, linestyle='--')
-    # Note: For classification, positive correlation might be expected
-    # (higher ADI → higher distance → more certain/singleton predictions)
 
-    # Add legend
     from matplotlib.patches import Patch
     legend_elements = [
         Patch(facecolor='#2E7D32', label='p < 0.001'),
@@ -1744,27 +1743,52 @@ def figure_spearman_classification(
     ]
     ax1.legend(handles=legend_elements, loc='best', fontsize=10)
 
-    # === PLOT 2: Scatter plot with dataset size ===
-    ax2.scatter(df_sorted[corr_label], df_sorted['n'], c=colors, s=100, 
-                alpha=0.7, edgecolor='black', linewidth=1)
-    ax2.axvline(x=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
-    ax2.set_xlabel(corr_title, fontsize=12, fontweight='bold')
-    ax2.set_ylabel('Dataset Size (n)', fontsize=12, fontweight='bold')
-    ax2.set_title(f'{score_col_label} vs Dataset Size', 
-                fontsize=12, pad=10)
-    ax2.grid(True, alpha=0.3, linestyle='--')
-    ax2.set_yscale('log')
+    # === PANEL 2: τ vs singleton_rate (bubble size = dataset size) ===
+    # singleton_rate is the dataset-level proportion of singleton predictions.
+    # It characterises how "easy" or unambiguous the classification task is overall.
+    # The question answered here: for tasks where singletons are common (easy datasets),
+    # does ADI still track efficiency? Ideally τ should be positive across all rates.
+    use_singleton_rate = 'singleton_rate' in df_sorted.columns and \
+                         df_sorted['singleton_rate'].notna().any()
 
-    # Annotate top 3 largest datasets
+    if use_singleton_rate:
+        x_vals = df_sorted['singleton_rate']
+        x_label = 'Overall Singleton Rate (dataset-level efficiency)'
+        x_annot_label = 'singleton_rate'
+    else:
+        x_vals = df_sorted['n']
+        x_label = 'Dataset Size (n)'
+        x_annot_label = 'n'
+
+    sizes = np.sqrt(df_sorted['n']) * 4   # bubble area ∝ dataset size
+
+    ax2.scatter(x_vals, df_sorted[corr_label],
+                c=colors, s=sizes, alpha=0.7,
+                edgecolor='black', linewidth=1)
+    ax2.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+
+    ax2.set_xlabel(x_label, fontsize=12, fontweight='bold')
+    ax2.set_ylabel(corr_title, fontsize=12, fontweight='bold')
+    ax2.set_title(
+        f'Correlation Strength vs Dataset Characteristics\n'
+        f'(bubble size ∝ √n)',
+        fontsize=12, pad=10)
+    ax2.grid(True, alpha=0.3, linestyle='--')
+
+    if not use_singleton_rate:
+        ax2.set_xscale('log')
+
+    # Annotate top-3 largest datasets
     top_n = df_sorted.nlargest(3, 'n')
     for _, row in top_n.iterrows():
-        ax2.annotate(row['data'], 
-                    xy=(row[corr_label], row['n']), 
-                    xytext=(10, 10), 
-                    textcoords='offset points',
-                    fontsize=8, 
-                    bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.5),
-                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
+        x_coord = row['singleton_rate'] if use_singleton_rate else row['n']
+        ax2.annotate(
+            row['data'],
+            xy=(x_coord, row[corr_label]),
+            xytext=(10, 10), textcoords='offset points',
+            fontsize=8,
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.5),
+            arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
 
     ax2.legend(handles=legend_elements, loc='best', fontsize=10)
 
@@ -1775,81 +1799,117 @@ def figure_spearman_classification(
 
     # Print summary statistics
     print("\n=== Summary Statistics ===")
-    print(f"Mean τ: {df[corr_label].mean():.3f}")
+    print(f"Mean τ:   {df[corr_label].mean():.3f}")
     print(f"Median τ: {df[corr_label].median():.3f}")
-    print(f"Range: [{df[corr_label].min():.3f}, {df[corr_label].max():.3f}]")
-    print(f"\nSignificant correlations (p < 0.05): {(df['p'] < 0.05).sum()}/{len(df)}")
-    print(f"Highly significant (p < 0.001): {(df['p'] < 0.001).sum()}/{len(df)}")
-    print(f"\nNegative correlations: {(df[corr_label] < 0).sum()}/{len(df)}")
-    print(f"Positive correlations: {(df[corr_label] > 0).sum()}/{len(df)}")
-    print(f"\nDataset size range: {df['n'].min()} to {df['n'].max()}")
+    print(f"Range:    [{df[corr_label].min():.3f}, {df[corr_label].max():.3f}]")
+    print(f"\nSignificant (p < 0.05):      {(df['p'] < 0.05).sum()}/{len(df)}")
+    print(f"Highly significant (p<0.001): {(df['p'] < 0.001).sum()}/{len(df)}")
+    print(f"Positive τ (ADI→singleton):  {(df[corr_label] > 0).sum()}/{len(df)}")
+    print(f"Negative τ:                  {(df[corr_label] < 0).sum()}/{len(df)}")
+    print(f"\nDataset size range:  {df['n'].min()} – {df['n'].max()}")
     print(f"Median dataset size: {df['n'].median():.0f}")
 
-    # Check if dataset size correlates with correlation strength
-    size_rho_corr = df['n'].corr(df[corr_label], method='spearman')
-    print(f"\nCorrelation between dataset size and ρ: {size_rho_corr:.3f}")
-    print("(Does larger n lead to stronger/weaker correlations?)")
-
+    if use_singleton_rate:
+        sr_tau, sr_p = spearmanr(df['singleton_rate'], df[corr_label])
+        print(f"\nSpearman(singleton_rate, τ) = {sr_tau:.3f}, p = {sr_p:.3f}")
+        print("(Do datasets with more singletons show stronger ADI–efficiency correlation?)")
+    else:
+        size_rho_corr = df['n'].corr(df[corr_label], method='spearman')
+        print(f"\nCorrelation between dataset size and τ: {size_rho_corr:.3f}")
+        
 
 def distance_by_adi_bins_classification(
-        df, distance_col='ncm_score', distance_label="Score", save_path=None):
+        df, distance_col='Set_Size', distance_label="Score",
+        singleton_col='is_singleton', save_path=None):
     """
-    Analyze prediction distance and coverage by ADI bins for classification.
-    Mirrors the regression coverage_by_adi_bins but uses distance instead of interval width.
-    
+    Analyze set-size distribution and coverage by ADI bins.
+    Plot 2 overlays singleton rate as a line (right y-axis) on the stacked bar,
+    making the ADI–efficiency trend legible despite the discrete nature of set sizes.
+
     Args:
-        df: DataFrame with columns ['ADI', 'In_Coverage', distance_col]
-        distance_col: Name of prediction distance column
+        df: DataFrame with columns ['ADI', 'In_Coverage', distance_col, singleton_col]
+        distance_col: Column holding prediction set size (integer)
+        distance_label: Human-readable label
+        singleton_col: Binary column (1 = singleton). If None or missing, computed here.
         save_path: Path to save figure
     """
-    # Bin ADI into groups
-    df['ADI_bin'] = pd.cut(df['ADI'], bins=ADI_BIN_EDGES, 
-                        labels=ADI_BIN_LABELS)
+    df = df.copy()
+    df['ADI_bin'] = pd.cut(df['ADI'], bins=ADI_BIN_EDGES, labels=ADI_BIN_LABELS)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    # Ensure singleton column exists
+    if singleton_col is None or singleton_col not in df.columns:
+        singleton_col = '_is_singleton'
+        df[singleton_col] = (df[distance_col] == 1).astype(int)
 
-    # === PLOT 1: Coverage rate by ADI bin ===
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4))
+
+    # === PLOT 1: Coverage rate by ADI bin (unchanged) ===
     coverage_by_adi = df.groupby('ADI_bin')['In_Coverage'].agg(['mean', 'count'])
-    coverage_by_adi['mean'].plot(kind='bar', ax=ax1, color='#2E7D32', alpha=0.7, edgecolor='black')
-    ax1.set_ylabel('Coverage Rate', fontsize=12, fontweight='bold')
-    ax1.set_xlabel('ADI Range', fontsize=12, fontweight='bold')
-    ax1.set_title('Coverage Rate by Applicability Domain Index', fontsize=12, fontweight='bold')
+    coverage_by_adi['mean'].plot(kind='bar', ax=ax1,
+                                 color='#2E7D32', alpha=0.7, edgecolor='black')
+    ax1.set_ylabel('Coverage Rate', fontsize=11, fontweight='bold')
+    ax1.set_xlabel('ADI Range', fontsize=11, fontweight='bold')
+    ax1.set_title('Coverage Rate by Applicability Domain Index',
+                  fontsize=11, fontweight='bold')
     ax1.set_ylim(0, 1.05)
     ax1.axhline(y=0.9, color='red', linestyle='--', linewidth=2, label='Target 90%')
     plt.setp(ax1.xaxis.get_majorticklabels(), rotation=0)
     ax1.legend()
     ax1.grid(True, alpha=0.3, axis='y')
 
-    # Add sample sizes on bars
     for i, (idx, row) in enumerate(coverage_by_adi.iterrows()):
-        ax1.text(i, row['mean'] + 0.02, f"n={row['count']}", 
-                ha='center', fontsize=9, fontweight='bold')
+        ax1.text(i, row['mean'] + 0.02, f"n={row['count']}",
+                 ha='center', fontsize=9, fontweight='bold')
 
-    # === PLOT 2: Prediction distance by ADI bin ===
+    # === PLOT 2: Stacked set-size distribution + singleton rate overlay ===
     ct = (
         df.groupby(['ADI_bin', distance_col])
         .size()
         .unstack(fill_value=0)
     )
-    ct = ct.div(ct.sum(axis=1), axis=0) * 100
-    ct.plot(
+    ct_pct = ct.div(ct.sum(axis=1), axis=0) * 100
+    ct_pct.plot(
         kind='bar',
         stacked=True,
         ax=ax2,
-        # cmap='RdYlGn_r',  # Red (size=1) to green (larger sets)
         cmap='Spectral_r',
         edgecolor='black',
         linewidth=0.5,
         width=0.8
-    )    
-    ax2.set_ylabel("Percentage", fontsize=12, fontweight='bold')
-    ax2.set_xlabel('ADI Range', fontsize=12, fontweight='bold')
-    ax2.legend(title=distance_label.replace(" ","\n"))
-    ax2.grid(axis='y', alpha=0.3)     
-    ax2.set_title(f'Distribution of predicted label set sizes by ADI', fontsize=12, fontweight='bold')
-    ax2.get_figure().suptitle('')     
+    )
+    ax2.set_ylabel('Percentage (%)', fontsize=11, fontweight='bold')
+    ax2.set_xlabel('ADI Range', fontsize=11, fontweight='bold')
+    ax2.legend(title=distance_label.replace(" ", "\n"),
+               bbox_to_anchor=(1.02, 1), loc='upper left')
+    ax2.grid(axis='y', alpha=0.3)
+    ax2.set_title('Label set size distribution by ADI',
+                  fontsize=11, fontweight='bold')
+    ax2.set_ylim(0, 105)
     plt.setp(ax2.xaxis.get_majorticklabels(), rotation=0)
-    
+
+    # Singleton rate overlay (right y-axis)
+    singleton_by_bin = (
+        df.groupby('ADI_bin')[singleton_col].mean() * 100
+    ).reindex(ADI_BIN_LABELS)
+
+    ax2r = ax2.twinx()
+    x_pos = range(len(ADI_BIN_LABELS))
+    ax2r.plot(x_pos, singleton_by_bin.values,
+              color='gray', marker='o', linewidth=2.5,
+              markersize=8, linestyle='-', label='Singleton rate')
+    # ax2r.set_ylabel('Singleton rate (%)', fontsize=11, fontweight='bold', color='black')
+    ax2r.set_ylim(0, 105)
+    ax2r.set_yticks([])
+    # ax2r.tick_params(axis='y', labelcolor='black')
+
+    # Annotate each point with its value
+    for xi, val in zip(x_pos, singleton_by_bin.values):
+        if not np.isnan(val):
+            ax2r.text(xi, val + 3, f'{val:.0f}%',
+                      ha='center', fontsize=9, fontweight='bold', color='black')
+
+    ax2r.legend(loc='upper right', fontsize=7)
+
     plt.tight_layout()
     if save_path is not None:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -1860,6 +1920,10 @@ def distance_by_adi_bins_classification(
     print(coverage_by_adi)
     print(f"\nOverall coverage: {df['In_Coverage'].mean():.1%}")
     print(f"Mean {distance_label}: {df[distance_col].mean():.3f}")
+    print("\n=== Singleton Rate by ADI Bin ===")
+    print(singleton_by_bin.round(1).to_string())
+    print(f"\nOverall singleton rate: {df[singleton_col].mean()*100:.1f}%")
+
     
 
 class ShapeSafeLGBMClassifier(LGBMClassifier):

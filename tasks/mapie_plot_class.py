@@ -523,108 +523,73 @@ for _df in combined_rows:
 combined_df = pd.concat(combined_rows, ignore_index=True)
 
 # ========== SPEARMAN CORRELATION ANALYSIS (NO SPLITS) ==========
-# We define a continuous confidence score that equals 1 for singleton predictions 
-# and decreases smoothly as the prediction set grows. 
-# This captures how close each prediction is to being fully unambiguous.”
+# Singleton indicator (1 if the prediction set is a singleton, 0 otherwise).
+# This is the classification analog of interval width in regression:
+#   - In regression: ADI correlates with interval width (point-wise, continuous)
+#   - In classification: ADI correlates with is_singleton (point-wise, binary)
+# Set_Size is misleading because LAC can produce empty sets, making the mean
+# a mix of two effects. The singleton indicator isolates efficiency clearly:
+# positive τ means higher ADI → more singleton (more certain) predictions.
 
+combined_df['is_singleton'] = (combined_df['Set_Size'] == 1).astype(int)
 
-combined_df['ADI_bin'] = pd.cut(
-    combined_df['ADI'], bins=ADI_BIN_EDGES, labels=ADI_BIN_LABELS)
-
-_SCORE = SCORE
-_SCORE_LABEL = SCORE_LABEL
-
-#_SCORE = "singleton_confidence"
-#_SCORE_LABEL = "singleton_confidence"  # set size = 1
-
+_SCORE = 'is_singleton'
+_SCORE_LABEL = 'Singleton prediction (Set Size = 1)'
 _ADI_COL = "ADI"
 
-# Check if prediction distance column exists
-if _SCORE in combined_df.columns:
-    # Global correlation (all data pooled)
-    rho, p = stats.spearmanr(
-        combined_df[_ADI_COL],
-        combined_df[_SCORE]
-    )
-    print(f"\nGlobal Spearman rho (ADI vs {SCORE_LABEL}) = {rho:.3f}, p = {p:.2e}")
+# Global correlation (all data pooled)
+rho, p = stats.kendalltau(
+    combined_df[_ADI_COL],
+    combined_df[_SCORE],
+    variant="b"
+)
+print(f"\nGlobal Kendall τ-b (ADI vs {_SCORE_LABEL}) = {rho:.3f}, p = {p:.2e}")
+print("Positive τ: higher ADI → more singleton predictions (better efficiency)")
 
-    # Hexbin plot for all data
-    plt.figure(figsize=(6,5))
-    plt.hexbin(
-        combined_df[_ADI_COL],
-        combined_df[_SCORE],
-        gridsize=40,
-        mincnt=1,
-        cmap='YlOrRd'
-    )
-    plt.xlabel(_ADI_COL, fontsize=12)
-    plt.ylabel(_SCORE_LABEL, fontsize=12)
-    plt.title("All datasets pooled", fontsize=13)
-    plt.colorbar(label="Count")
-    plt.tight_layout()
-    plt.show()
+# Per-dataset correlation analysis
+rows = []
+for name in combined_df['data'].unique():
+    g = combined_df[combined_df['data'] == name].dropna(subset=[_ADI_COL, _SCORE])
+    if len(g) > 10:
+        tau, pval = stats.kendalltau(g[_ADI_COL], g[_SCORE], variant="b")
+        singleton_rate = g['is_singleton'].mean() * 100
+        rows.append({
+            "data": name,
+            "rho": tau,          # keep column name 'rho' for figure_spearman_classification
+            "p": pval,
+            "n": len(g),
+            "singleton_rate": singleton_rate,   # used in panel B of figure
+        })
 
-    # Per-dataset correlation analysis (NO SPLIT GROUPING)
-    rows = []
-    for name in combined_df['data'].unique():
-        g = combined_df[combined_df['data'] == name].dropna(subset=[_ADI_COL, _SCORE])
+corr_df = pd.DataFrame(rows).sort_values("rho")
+display(corr_df)
 
-        if len(g) > 10:
-            # --- Spearman (monotonic association)
-            #rho, p = stats.spearmanr(g[_ADI_COL], g[_SCORE])
-            rho, p = stats.kendalltau(g[_ADI_COL], g[_SCORE], variant="b")
-            rows.append({
-                "data": name,
-                "rho": rho,
-                "p": p,
-                "n": len(g)
-            })
+print("\nInterpretation:")
+print(f"Kendall τ-b measures monotonic association between ADI and singleton indicator.")
+print(f"  Positive τ: Higher ADI → more singleton predictions (better efficiency in domain)")
+print(f"  Negative τ: Higher ADI → fewer singletons (unexpected, check calibration)")
+print(f"  τ ≈ 0: No monotonic relationship between ADI and prediction certainty")
 
-    corr_df = pd.DataFrame(rows).sort_values("rho")
-    display(corr_df)
+# Save correlation results
+corr_df.to_excel(product["data"], index=False)
 
-    # Interpretation note
-    print("Interpretation:")
-    print(f"Spearman ρ measures monotonic relationship between ADI and {_SCORE_LABEL}.")
-    print("For classification:")
-    print(f"  - Positive ρ: Higher ADI → Higher {_SCORE_LABEL}")
-    print(f"  - Negative ρ: Higher ADI → Lower {_SCORE_LABEL}")
-    print("  - ρ ≈ 0: No clear monotonic relationship")
+# Generate Spearman figure (consistent with regression style; panel structure unchanged)
+figure_spearman_classification(
+    corr_df,
+    score_col_label=_SCORE_LABEL,
+    corr_label="rho",
+    corr_title="Kendall τ-b (ADI vs Singleton)",
+    save_path=product["plot"],
+)
 
-    # Small multiples (4 most extreme correlations)
-    print("\nShowing 6 datasets with strongest correlations:")
-    for name in corr_df.sort_values("rho", key=abs).tail(6)["data"]:
-        g = combined_df[combined_df["data"]==name]
-        plt.figure(figsize=(3,3))
-        plt.scatter(g[_ADI_COL], g[_SCORE], s=8, alpha=0.4)
-        plt.title(name, fontsize=10)
-        plt.xlabel(_ADI_COL, fontsize=9)
-        plt.ylabel(_SCORE_LABEL, fontsize=9)
-        plt.tight_layout()
-        plt.show()
-
-    # Save correlation results
-    corr_df.to_excel(product["data"], index=False)
-
-    # Generate Spearman figure (matching regression style)
-    figure_spearman_classification(
-        corr_df, 
-        score_col_label=_SCORE_LABEL,
-        corr_label="rho",
-        corr_title="Kendall tau=b",
-        save_path=product["plot"],
-    )
-
-    
-    # Generate ADI bins analysis (matching regression style)
-    distance_by_adi_bins_classification(
-        combined_df,
-        distance_col=_SCORE, 
-        distance_label=_SCORE_LABEL,
-        save_path=product["plot"].replace("spearman", "adi_bins_distance")
-    )
-else:
-    print(f"\nWarning: {_SCORE} column not found. Skipping correlation analysis.")
+# Generate ADI bins analysis
+distance_by_adi_bins_classification(
+    combined_df,
+    distance_col='Set_Size',
+    distance_label=SCORE_LABEL,
+    singleton_col='is_singleton',
+    save_path=product["plot"].replace("spearman", "adi_bins_distance")
+)
 
 # ========== EXISTING VISUALIZATIONS  ==========
 
@@ -646,8 +611,8 @@ dataset_stats = plot_coverage_efficiency_classification(
     distance_col=SCORE,
     distance_label=SCORE_LABEL,
     save_path=product["plot"].replace("spearman", "coverage_efficiency"),
-    max_labels_panel_a=15,
-    annotate_top_n=3
+    max_labels_panel_a=50,
+    annotate_top_n=4
 )
 
 dataset_stats.rename(columns={"mean_distance": f"mean_{_SCORE}",
