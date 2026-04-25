@@ -10,6 +10,9 @@ import pickle
 from pathlib import Path
 from tasks.assessment.utils import init_logging
 from tasks.interval_scaler import IntervalScaler
+from tasks.mapie_diagnostic import (
+    ADI_BIN_EDGES, ADI_BIN_LABELS
+)
 
 
 # + tags=["parameters"]
@@ -31,15 +34,17 @@ logger = init_logging(Path(product["nb"]).parent / "logs", "plots.log")
 # CONFIGURATION - FIXED BINS
 # -----------------------------
 
-ADI_BINS = [0, 0.5, 0.75, 0.85, 1.0]
-ADI_LABELS = ["Very Low", "Low", "Moderate", "High"]
+ADI_BINS = ADI_BIN_EDGES
+ADI_LABELS = ADI_BIN_LABELS
+
 
 CHUNK_SIZE = 50000  # Process data in chunks after loading (memory management)
 
 # Determine metric name based on task type
-METRIC_NAME = "probs_distance" if classification else "Interval_Width"
-METRIC_LABEL = "Prediction Confidence" if classification else "Relative Interval Width"
-METRIC_COL_SUFFIX = "probs_distance" if classification else "Interval_Width"
+# Classification uses singleton_rate (%), Regression uses Interval_Width
+METRIC_NAME = "singleton_rate" if classification else "Interval_Width"
+METRIC_LABEL = "Singleton Rate (%)" if classification else "Relative Interval Width"
+METRIC_COL_SUFFIX = "singleton_rate" if classification else "Interval_Width"
 HIGHER_IS_BETTER = classification
 
 # -----------------------------
@@ -381,29 +386,33 @@ def process_files(upstream, prefix, ncm_code, is_classification, max_files=300,
             if datasets is not None and model_name not in datasets:
                 logger.info(f"Skip {model_name}")
                 continue
+            
             filepath = upstream[tag][key]["results"]
             
             try:
-                # Determine metric column name
-                metric_col = f"{model_name}_{col_suffix}" if is_classification else col_suffix
-                
-                # Read entire Excel file (can't chunk Excel natively)
-                df = pd.read_excel(
-                    filepath,
-                    sheet_name="Prediction Intervals",
-                    usecols=["ADI", metric_col]
-                )
-                
-                if not is_classification:
-                    # Get dataset name from model_name
-                    df[f'Relative_{metric_col}'] = df.apply(
+                if is_classification:
+                    # For classification, we need Set_Size to calculate singleton_rate
+                    df = pd.read_excel(
+                        filepath,
+                        sheet_name="Prediction Intervals",
+                        usecols=["ADI", "Set_Size"]
+                    )
+                    # singleton_rate = mean(is_singleton) * 100
+                    # We store the individual 0/1 * 100 so the Streaming Mean 
+                    # correctly aggregates to the final percentage.
+                    df['metric'] = (df['Set_Size'] == 1).astype(int) * 100
+                else:
+                    # Regression logic remains using Interval_Width
+                    metric_col = METRIC_COL_SUFFIX
+                    df = pd.read_excel(
+                        filepath,
+                        sheet_name="Prediction Intervals",
+                        usecols=["ADI", metric_col]
+                    )
+                    df['metric'] = df.apply(
                         lambda row: scaler.scale_interval(model_name, row[metric_col]),
                         axis=1
-                    )                    
-                    df = df.rename(columns={f'Relative_{metric_col}': 'metric'})
-                else:
-                    # Rename for consistency
-                    df = df.rename(columns={metric_col: 'metric'})
+                    )
                 
                 # Process in chunks internally to avoid peak memory
                 n_rows = len(df)
@@ -414,11 +423,11 @@ def process_files(upstream, prefix, ncm_code, is_classification, max_files=300,
                 
                 files_processed += 1
                 if files_processed % 10 == 0:
-                    logger.info(f"  Processed {files_processed} files...")
+                    logger.info(f"   Processed {files_processed} files...")
                 
             except Exception as e:
                 files_failed += 1
-                logger.error(f"  Failed {model_name}: {str(e)}")
+                logger.error(f"   Failed {model_name}: {str(e)}")
                 continue
     
     logger.info(f"\nProcessing complete: {files_processed} files processed, {files_failed} failed")
