@@ -538,24 +538,28 @@ _SCORE_LABEL = 'Singleton prediction (Set Size = 1)'
 _ADI_COL = "ADI"
 
 # Global correlation (all data pooled)
-rho, p = stats.kendalltau(
+rho, p = stats.spearmanr(
     combined_df[_ADI_COL],
     combined_df[_SCORE],
-    variant="b"
+    # variant="b"
 )
-print(f"\nGlobal Kendall τ-b (ADI vs {_SCORE_LABEL}) = {rho:.3f}, p = {p:.2e}")
-print("Positive τ: higher ADI → more singleton predictions (better efficiency)")
+print(f"\nGlobal Spearman ρ (ADI vs {_SCORE_LABEL}) = {rho:.3f}, p = {p:.2e}")
+print("Positive ρ: higher ADI → more singleton predictions (better efficiency)")
 
 # Per-dataset correlation analysis
 rows = []
 for name in combined_df['data'].unique():
     g = combined_df[combined_df['data'] == name].dropna(subset=[_ADI_COL, _SCORE])
     if len(g) > 10:
-        tau, pval = stats.kendalltau(g[_ADI_COL], g[_SCORE], variant="b")
+        #tau, pval = stats.kendalltau(g[_ADI_COL], g[_SCORE], variant="b")
+        # keep spearman for cossistency
+        # For classification, the Spearman coefficient reflects the monotonic association 
+        # between the applicability domain index and the occurrence of singleton predictions (binary variable).”        
+        rho, pval = stats.spearmanr(g[_ADI_COL], g[_SCORE])
         singleton_rate = g['is_singleton'].mean() * 100
         rows.append({
             "data": name,
-            "rho": tau,          # keep column name 'rho' for figure_spearman_classification
+            "rho": rho,          # keep column name 'rho' for figure_spearman_classification
             "p": pval,
             "n": len(g),
             "singleton_rate": singleton_rate,   # used in panel B of figure
@@ -565,10 +569,10 @@ corr_df = pd.DataFrame(rows).sort_values("rho")
 display(corr_df)
 
 print("\nInterpretation:")
-print(f"Kendall τ-b measures monotonic association between ADI and singleton indicator.")
-print(f"  Positive τ: Higher ADI → more singleton predictions (better efficiency in domain)")
-print(f"  Negative τ: Higher ADI → fewer singletons (unexpected, check calibration)")
-print(f"  τ ≈ 0: No monotonic relationship between ADI and prediction certainty")
+print("Spearman ρ measures monotonic association between ADI and singleton indicator.")
+print("  Positive ρ: Higher ADI → more singleton predictions (better efficiency in domain)")
+print("  Negative ρ: Higher ADI → fewer singletons (unexpected, check calibration)")
+print("  ρ ≈ 0: No monotonic relationship between ADI and prediction certainty")
 
 # Save correlation results
 corr_df.to_excel(product["data"], index=False)
@@ -578,7 +582,7 @@ figure_spearman_classification(
     corr_df,
     score_col_label=_SCORE_LABEL,
     corr_label="rho",
-    corr_title="Kendall τ-b (ADI vs Singleton)",
+    corr_title="Spearman ρ (ADI vs Singleton indicator)",
     save_path=product["plot"],
 )
 

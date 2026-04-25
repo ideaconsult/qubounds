@@ -1697,7 +1697,7 @@ def figure_spearman_classification(
         df, score_col_label="Score",
         corr_label="rho", corr_title="Spearman ρ", save_path=None):
     """
-    Kendall τ-b correlation analysis for classification: ADI vs singleton indicator.
+    Spearman ρ correlation analysis for classification: ADI vs singleton indicator.
     Mirrors the regression version structure (two panels, one correlation bar chart,
     one scatter). Panel B uses singleton_rate on x-axis if available, else n.
 
@@ -1731,7 +1731,7 @@ def figure_spearman_classification(
     ax1.set_yticklabels(df_sorted['data'], fontsize=7)
     ax1.set_xlabel(corr_title, fontsize=12)
     ax1.set_title(
-        f'ADI vs {score_col_label} Correlation\n(Sorted by Strength)',
+        f'ADI vs {score_col_label} prediction association\n(sorted by strength)',
         fontsize=12, pad=10)
     ax1.grid(axis='x', alpha=0.3, linestyle='--')
 
@@ -1743,50 +1743,53 @@ def figure_spearman_classification(
     ]
     ax1.legend(handles=legend_elements, loc='best', fontsize=10)
 
-    # === PANEL 2: τ vs singleton_rate (bubble size = dataset size) ===
+    # === PANEL 2: rho vs singleton_rate (bubble size = dataset size) ===
     # singleton_rate is the dataset-level proportion of singleton predictions.
     # It characterises how "easy" or unambiguous the classification task is overall.
     # The question answered here: for tasks where singletons are common (easy datasets),
     # does ADI still track efficiency? Ideally τ should be positive across all rates.
     use_singleton_rate = 'singleton_rate' in df_sorted.columns and \
                          df_sorted['singleton_rate'].notna().any()
-
+    use_singleton_rate = False
     if use_singleton_rate:
-        x_vals = df_sorted['singleton_rate']
-        x_label = 'Overall Singleton Rate (dataset-level efficiency)'
+        # this is more interesting
+        y_vals = df_sorted['singleton_rate']
+        y_label = 'Overall Singleton Rate (dataset-level efficiency)'
         x_annot_label = 'singleton_rate'
     else:
-        x_vals = df_sorted['n']
-        x_label = 'Dataset Size (n)'
+        # keep this for consistency with regression chart
+        y_vals = df_sorted['n']
+        y_label = 'Dataset Size (n)'
         x_annot_label = 'n'
 
     sizes = np.sqrt(df_sorted['n']) * 4   # bubble area ∝ dataset size
 
-    ax2.scatter(x_vals, df_sorted[corr_label],
+    ax2.scatter(df_sorted[corr_label],
+                y_vals, 
                 c=colors, s=sizes, alpha=0.7,
                 edgecolor='black', linewidth=1)
-    ax2.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+    ax2.axvline(x=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
 
-    ax2.set_xlabel(x_label, fontsize=12, fontweight='bold')
-    ax2.set_ylabel(corr_title, fontsize=12, fontweight='bold')
+    ax2.set_ylabel(y_label, fontsize=12)
+    ax2.set_xlabel(corr_title, fontsize=12)
     ax2.set_title(
         f'Correlation Strength vs Dataset Characteristics\n'
         f'(bubble size ∝ √n)',
         fontsize=12, pad=10)
     ax2.grid(True, alpha=0.3, linestyle='--')
 
-    if not use_singleton_rate:
-        ax2.set_xscale('log')
+    #if not use_singleton_rate:
+    #    ax2.set_yscale('log')
 
-    # Annotate top-3 largest datasets
-    top_n = df_sorted.nlargest(3, 'n')
+    # Annotate top-5 largest datasets
+    top_n = df_sorted.nlargest(10, 'n')
     for _, row in top_n.iterrows():
         x_coord = row['singleton_rate'] if use_singleton_rate else row['n']
         ax2.annotate(
             row['data'],
-            xy=(x_coord, row[corr_label]),
+            xy=(row[corr_label], x_coord),
             xytext=(10, 10), textcoords='offset points',
-            fontsize=8,
+            fontsize=7,
             bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.5),
             arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
 
@@ -1799,19 +1802,19 @@ def figure_spearman_classification(
 
     # Print summary statistics
     print("\n=== Summary Statistics ===")
-    print(f"Mean τ:   {df[corr_label].mean():.3f}")
-    print(f"Median τ: {df[corr_label].median():.3f}")
+    print(f"Mean ρ:   {df[corr_label].mean():.3f}")
+    print(f"Median ρ: {df[corr_label].median():.3f}")
     print(f"Range:    [{df[corr_label].min():.3f}, {df[corr_label].max():.3f}]")
     print(f"\nSignificant (p < 0.05):      {(df['p'] < 0.05).sum()}/{len(df)}")
     print(f"Highly significant (p<0.001): {(df['p'] < 0.001).sum()}/{len(df)}")
-    print(f"Positive τ (ADI→singleton):  {(df[corr_label] > 0).sum()}/{len(df)}")
-    print(f"Negative τ:                  {(df[corr_label] < 0).sum()}/{len(df)}")
+    print(f"Positive ρ (ADI→singleton):  {(df[corr_label] > 0).sum()}/{len(df)}")
+    print(f"Negative ρ:                  {(df[corr_label] < 0).sum()}/{len(df)}")
     print(f"\nDataset size range:  {df['n'].min()} – {df['n'].max()}")
     print(f"Median dataset size: {df['n'].median():.0f}")
 
     if use_singleton_rate:
-        sr_tau, sr_p = spearmanr(df['singleton_rate'], df[corr_label])
-        print(f"\nSpearman(singleton_rate, τ) = {sr_tau:.3f}, p = {sr_p:.3f}")
+        sr_rho, sr_p = spearmanr(df['singleton_rate'], df[corr_label])
+        print(f"\nSpearman(singleton_rate, ρ) = {sr_rho:.3f}, p = {sr_p:.3f}")
         print("(Do datasets with more singletons show stronger ADI–efficiency correlation?)")
     else:
         size_rho_corr = df['n'].corr(df[corr_label], method='spearman')
