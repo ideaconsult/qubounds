@@ -265,12 +265,16 @@ def predict_conformal(df, pred_column, true_column=None,
         sigma_pred_chunk = sigma_model.predict(X_ecfp_chunk)
 
         # we could use mapie.predict_interval() instead ...
+        # this is now only for comparison,  to be switched later
+        # we have fixed estimator taking values from the file
+        mapie.estimator_.y_pred = y_pred_chunk        
+        y_pred, y_pis = mapie.predict_interval(X_ecfp_chunk)
         
         # DIAGNOSTICS
         # Compute reference conformity scores S = |y - y_hat| / sigma_hat
+        eps = 1e-6          
         if has_true:
             #logger.info(sigma_pred_chunk[sigma_pred_chunk <= 0])
-            eps = 1e-6  
             sigma_safe = np.maximum(sigma_pred_chunk, eps)
             valid = sigma_safe > 0
             ref_scores_chunk = (
@@ -281,12 +285,16 @@ def predict_conformal(df, pred_column, true_column=None,
             #logger.info(f"{len(ref_scores_chunk)}")
             #logger.info(f"{len(y_true_chunk)}")
         else:
+            sigma_safe = np.maximum(sigma_pred_chunk, eps)
             ref_scores_chunk = None
         
         # Compute intervals: pred ± quantile * sigma
-        y_pi_lower = y_pred_chunk - quantile * sigma_pred_chunk
-        y_pi_upper = y_pred_chunk + quantile * sigma_pred_chunk
+        y_pi_lower = y_pred_chunk - quantile * sigma_safe
+        y_pi_upper = y_pred_chunk + quantile * sigma_safe
         
+        print(y_pred_chunk, y_pred)
+        print(y_pi_lower, y_pi_upper, y_pis)
+
         # Interval widths
         interval_widths_chunk = y_pi_upper - y_pi_lower
         all_interval_widths.extend(interval_widths_chunk)
@@ -307,8 +315,12 @@ def predict_conformal(df, pred_column, true_column=None,
             f"{tag}_sigma": sigma_pred_chunk,
             "Interval_Width": interval_widths_chunk,
             "Smiles": smiles_chunk,
-            "ADI": adi_chunk
+            "ADI": adi_chunk,
+            f"{tag}_pred_mapie": y_pred,
+            f"{tag}_lower_mapie": y_pis[:, 0, 0],
+            f"{tag}_upper_mapie": y_pis[:, 1, 0],
         }
+
 
         logger.info(f"{len(sigma_pred_chunk)}")
         logger.info(f"{len(interval_widths_chunk)}")
