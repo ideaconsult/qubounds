@@ -347,7 +347,15 @@ class ConformalAggregator:
         self.model_adi: Dict[str, BinnedAggregator] = {}
         self.model_all: Dict[str, StreamingStats] = {}
         self.model_digest: Dict[str, TDigest] = {}  # per-model overall digest
-        
+
+        # Set-size count tables (classification only)
+        # global_size_counts[adi_bin][set_size] = count
+        # model_size_counts[model][adi_bin][set_size] = count
+        self.global_size_counts: Dict[str, Dict[int, int]] = {
+            k: defaultdict(int) for k in ADI_LABELS
+        }
+        self.model_size_counts: Dict[str, Dict[str, Dict[int, int]]] = {}
+
         # Model metadata
         self.model_names = []
         self.total_chemicals = 0
@@ -360,14 +368,13 @@ class ConformalAggregator:
             self.model_adi[model_name] = BinnedAggregator(bins=ADI_LABELS)
             self.model_all[model_name] = StreamingStats()
             self.model_digest[model_name] = TDigest()
+            self.model_size_counts[model_name] = {k: defaultdict(int) for k in ADI_LABELS}
             self.model_names.append(model_name)
-        
+
         # Bin the data
         df['ADI_bin'] = pd.cut(df['ADI'], bins=ADI_BINS, labels=ADI_LABELS, include_lowest=True)
-        
-        # Update global_all and global_digest BEFORE dropping NaN ADI rows,
-        # so the overall distribution panel (Panel C) includes all molecules
-        # regardless of whether their ADI value falls in a named bin.
+
+        # Update global_all and global_digest BEFORE dropping NaN ADI rows
         for v in df['metric'].dropna():
             self.global_all.update(v)
             self.global_digest.add(v)
@@ -376,18 +383,26 @@ class ConformalAggregator:
 
         # Drop rows with missing values for the ADI-binned aggregators only
         df_clean = df.dropna(subset=['ADI_bin', 'metric'])
-        
+
         # Update global and per-model aggregators
         for _, row in df_clean.iterrows():
             adi_bin = row['ADI_bin']
             metric_value = row['metric']
-            
+
             # Global ADI-bin updates
             self.global_adi.update(adi_bin, metric_value)
-            
+
             # Per-model updates
             self.model_adi[model_name].update(adi_bin, metric_value)
             self.model_all[model_name].update(metric_value)
+
+        # Set-size count table (classification: Set_Size column present)
+        if self.is_classification and 'Set_Size' in df_clean.columns:
+            for adi_bin, grp in df_clean.groupby('ADI_bin', observed=True):
+                vc = grp['Set_Size'].value_counts()
+                for sz, cnt in vc.items():
+                    self.global_size_counts[adi_bin][int(sz)] += int(cnt)
+                    self.model_size_counts[model_name][adi_bin][int(sz)] += int(cnt)
     
     def save(self, filepath: str):
         """Save aggregator state to disk"""
@@ -474,11 +489,20 @@ class ConformalAggregator:
             if model_name in excluded_models:
                 continue
 
-            # Copy model-level stats (shared reference is fine – read-only after build)
+            # Copy model-level stats
             new_aggr.model_names.append(model_name)
             new_aggr.model_adi[model_name] = self.model_adi[model_name]
             new_aggr.model_all[model_name] = self.model_all[model_name]
             new_aggr.model_digest[model_name] = self.model_digest[model_name]
+
+            # Merge size-count tables
+            src_sc = getattr(self, 'model_size_counts', {}).get(model_name, {})
+            for adi_bin, sz_dict in src_sc.items():
+                if adi_bin not in new_aggr.global_size_counts:
+                    new_aggr.global_size_counts[adi_bin] = defaultdict(int)
+                for sz, cnt in sz_dict.items():
+                    new_aggr.global_size_counts[adi_bin][sz] += cnt
+            new_aggr.model_size_counts[model_name] = src_sc
 
             # Merge into global ADI bins
             for bin_label in ADI_LABELS:
@@ -548,15 +572,11 @@ def process_files(upstream, prefix, ncm_code, is_classification, max_files=300,
             
             try:
                 if is_classification:
-                    # For classification, we need Set_Size to calculate singleton_rate
                     df = pd.read_excel(
                         filepath,
                         sheet_name="Prediction Intervals",
                         usecols=["ADI", "Set_Size"]
                     )
-                    # singleton_rate = mean(is_singleton) * 100
-                    # We store the individual 0/1 * 100 so the Streaming Mean 
-                    # correctly aggregates to the final percentage.
                     df['metric'] = (df['Set_Size'] == 1).astype(int) * 100
                 else:
                     # Regression logic remains using Interval_Width
@@ -817,313 +837,261 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str, higher_is_
 # -----------------------------
 
 
-def plot_global_analysis_classification(aggregator: 'ConformalAggregator', save_path: str):
+# ---------------------------------------------------------------------------
+# CLASSIFICATION PLOTTING  –  three-panel design
+# ---------------------------------------------------------------------------
+
+# Colour palette for set sizes (0..10+)  — matches mapie_plot_class.py style
+_SIZE_COLORS = {
+    0:  '#7B0D1E',   # empty set  – dark crimson
+    1:  '#1565C0',   # singleton  – deep blue
+    2:  '#26A69A',   # size 2     – teal
+    3:  '#A5D6A7',   # size 3     – light green
+    4:  '#D4E157',   # size 4     – yellow-green
+    5:  '#FFCA28',   # size 5     – amber
+    6:  '#FFA726',   # size 6     – orange
+    7:  '#EF5350',   # size 7     – red
+    8:  '#AB47BC',   # size 8     – purple
+    9:  '#EC407A',   # size 9     – pink
+    10: '#78909C',   # size >=10  – grey-blue
+}
+_SIZE_LABEL = {0: '0 (empty)', 1: '1 (singleton)'}
+
+
+def _size_counts_to_pct(counts_dict: dict, max_size: int = 10) -> pd.Series:
+    """Convert {size: count} → 100-normalised percentage Series."""
+    total = sum(counts_dict.values())
+    if total == 0:
+        return pd.Series(dtype=float)
+    sizes = range(0, max_size + 1)
+    return pd.Series(
+        {s: 100.0 * counts_dict.get(s, 0) / total for s in sizes}
+    )
+
+
+def plot_classification_summary(aggregator: 'ConformalAggregator',
+                                save_path: str,
+                                utility_threshold: float = 50.0):
     """
-    Global summary for classification conformal prediction.
+    Three-panel classification summary figure.
 
-    Layout (2 x 2):
-      A (top-left)   : Mean singleton rate by ADI bin (bar chart)
-      B (top-right)  : Sample count by ADI bin
-      C (bottom-left): Stacked bar — set-size composition per ADI bin
-                       (singleton / size=2 / size>=3)
-                       Uses StreamingStats means stored per-bin.
-      D (bottom-right): CP robustness scatter (ADI centre vs mean singleton rate)
+    Panel 1 (top, full-width)
+        "Certainty Gradient" — stacked bar of set-size composition per ADI bin
+        (style: distance_by_adi_bins_classification / Plot 2).
+        Singleton rate overlaid as a grey line on a right y-axis, value-annotated.
+        Bottom x-axis label: ADI bin. Each bar sums to 100 %.
+
+    Panel 2 (bottom-left)
+        "Model Utility Ranking" — horizontal bar chart for all models,
+        ranked by singleton rate.  Threshold dashed line.  No std bars.
+
+    Panel 3 (bottom-right)
+        "Reliability Heatmap" — models × ADI bins, cell = singleton rate %.
+        Colour scale: RdYlGn, 0–100.
     """
-    fig = plt.figure(figsize=(14, 10))
-    gs = fig.add_gridspec(2, 2, hspace=0.38, wspace=0.32)
-
-    mean_metric = aggregator.global_adi.get_mean_metric()   # mean singleton-rate (%)
-    std_metric  = aggregator.global_adi.get_std_metric()
-    adi_bin_centers = [0.25, 0.625, 0.8, 0.925]
-
-    means = [mean_metric[k] for k in ADI_LABELS]
-    stds  = [std_metric[k]  for k in ADI_LABELS]
-    counts = [aggregator.global_adi.counts[k] for k in ADI_LABELS]
-    x_pos = np.arange(len(ADI_LABELS))
-
-    # ------------------------------------------------------------------
-    # A: Mean singleton rate (%) by ADI bin
-    # ------------------------------------------------------------------
-    ax1 = fig.add_subplot(gs[0, 0])
-    # Use standard error rather than raw std (Bernoulli, so std ≈ 50 always)
-    se = [s / np.sqrt(max(c, 1)) for s, c in zip(stds, counts)]
-    ax1.bar(x_pos, means, yerr=se, capsize=5,
-            alpha=0.7, color='steelblue', edgecolor='navy')
-    ax1.set_xticks(x_pos)
-    ax1.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
-    ax1.set_ylabel('Mean Singleton Rate (%)', fontsize=11, fontweight='bold')
-    ax1.set_title('A: Certainty vs Applicability Domain\n(error bars = standard error)', fontsize=11, fontweight='bold')
-    ax1.set_ylim(0, 115)
-    ax1.grid(axis='y', alpha=0.3, linestyle='--')
-    for i, (m, s) in enumerate(zip(means, se)):
-        ax1.text(i, m + s + 2, f'{m:.1f}%', ha='center', va='bottom', fontsize=9)
-
-    # ------------------------------------------------------------------
-    # B: Sample count by ADI bin
-    # ------------------------------------------------------------------
-    ax2 = fig.add_subplot(gs[0, 1])
-    bars = ax2.bar(x_pos, counts, alpha=0.7, color='coral', edgecolor='darkred')
-    ax2.set_xticks(x_pos)
-    ax2.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
-    ax2.set_ylabel('Number of Predictions', fontsize=11, fontweight='bold')
-    ax2.set_title('B: Sample Distribution by ADI', fontsize=12, fontweight='bold')
-    ax2.grid(axis='y', alpha=0.3, linestyle='--')
-    for bar, cnt in zip(bars, counts):
-        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                 f'{cnt:,}', ha='center', va='bottom', fontsize=9)
-
-    # ------------------------------------------------------------------
-    # C: Stacked bar — set-size composition per ADI bin
-    # The aggregator stores mean singleton-rate (%) as 'metric'.
-    # We also store means for size=0 and size>=2 via extra BinnedAggregators
-    # if available; otherwise we approximate from the singleton-rate mean:
-    #   singleton   = mean_metric / 100
-    #   non-singleton = 1 - singleton  (we cannot distinguish size=2 vs >=3 here)
-    # ------------------------------------------------------------------
-    ax3 = fig.add_subplot(gs[1, 0])
-
-    singleton_frac  = np.array([mean_metric[k] / 100.0 for k in ADI_LABELS])
-    other_frac      = 1.0 - singleton_frac
-
-    # Check if extended size stats are available
-    has_size_breakdown = hasattr(aggregator, 'global_adi_size2') and \
-                         hasattr(aggregator, 'global_adi_size3plus')
-
-    if has_size_breakdown:
-        size2_mean    = aggregator.global_adi_size2.get_mean_metric()
-        size3p_mean   = aggregator.global_adi_size3plus.get_mean_metric()
-        frac_size2    = np.array([size2_mean[k] / 100.0   for k in ADI_LABELS])
-        frac_size3p   = np.array([size3p_mean[k] / 100.0  for k in ADI_LABELS])
-        frac_empty    = np.clip(1.0 - singleton_frac - frac_size2 - frac_size3p, 0, 1)
-
-        ax3.bar(x_pos, singleton_frac * 100, label='Singleton (size=1)',
-                color='#2E7D32', alpha=0.85, edgecolor='black')
-        ax3.bar(x_pos, frac_size2 * 100, bottom=singleton_frac * 100,
-                label='Size = 2', color='#FF9800', alpha=0.85, edgecolor='black')
-        bottom2 = (singleton_frac + frac_size2) * 100
-        ax3.bar(x_pos, frac_size3p * 100, bottom=bottom2,
-                label='Size ≥ 3', color='#D32F2F', alpha=0.85, edgecolor='black')
-        bottom3 = bottom2 + frac_size3p * 100
-        ax3.bar(x_pos, frac_empty * 100, bottom=bottom3,
-                label='Empty set', color='#9E9E9E', alpha=0.85, edgecolor='black')
-    else:
-        # Fallback: singleton vs non-singleton only
-        ax3.bar(x_pos, singleton_frac * 100, label='Singleton (size=1)',
-                color='#2E7D32', alpha=0.85, edgecolor='black')
-        ax3.bar(x_pos, other_frac * 100, bottom=singleton_frac * 100,
-                label='Non-singleton (size≥2 or empty)', color='#D32F2F',
-                alpha=0.85, edgecolor='black')
-
-    ax3.set_xticks(x_pos)
-    ax3.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
-    ax3.set_ylabel('Fraction of Predictions (%)', fontsize=11, fontweight='bold')
-    ax3.set_title('C: Set-Size Composition by ADI Bin', fontsize=12, fontweight='bold')
-    ax3.set_ylim(0, 105)
-    ax3.legend(loc='lower right', fontsize=9)
-    ax3.grid(axis='y', alpha=0.3, linestyle='--')
-    # Label singleton % on bars
-    for i, f in enumerate(singleton_frac):
-        ax3.text(i, f * 100 / 2, f'{f*100:.1f}%',
-                 ha='center', va='center', fontsize=9,
-                 color='white', fontweight='bold')
-
-    # ------------------------------------------------------------------
-    # D: CP robustness — ADI bin centre vs mean singleton rate
-    # ------------------------------------------------------------------
-    ax4 = fig.add_subplot(gs[1, 1])
-    sizes_scatter = [c / 1000 for c in counts]
-    ax4.scatter(adi_bin_centers, means, s=sizes_scatter,
-                alpha=0.6, c='steelblue', edgecolors='navy')
-    z = np.polyfit(adi_bin_centers, means, 1)
-    p_poly = np.poly1d(z)
-    x_trend = np.linspace(0, 1, 100)
-    ax4.plot(x_trend, p_poly(x_trend), 'r--', alpha=0.8, linewidth=2,
-             label=f'Trend: y={z[0]:.3f}x+{z[1]:.3f}')
-
-    from scipy.stats import spearmanr as _spearmanr
-    rho, pval = _spearmanr(means, adi_bin_centers)
-    interpretation = '✓ Good' if rho > 0.3 else ('○ Weak' if rho > 0 else '⚠ Unexpected')
-
-    ax4.set_xlabel('ADI (Applicability Domain Index)', fontsize=11, fontweight='bold')
-    ax4.set_ylabel('Mean Singleton Rate (%)', fontsize=11, fontweight='bold')
-    ax4.set_title(f'D: CP Robustness Check ({interpretation})\n'
-                  f'Spearman ρ = {rho:.3f} (p={pval:.4f})',
-                  fontsize=12, fontweight='bold')
-    ax4.legend(loc='best', fontsize=9)
-    ax4.grid(alpha=0.3, linestyle='--')
-    ax4.set_xlim([0, 1])
-
-    fig.suptitle(
-        f'Conformal Prediction Analysis – Global Summary (Classification)\n'
-        f'({aggregator.total_chemicals:,} predictions across {len(aggregator.model_names)} models)',
-        fontsize=14, fontweight='bold', y=0.998)
-
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    logger.info(f'Global analysis (classification) saved to: {save_path}')
-    plt.close()
-
-
-def plot_model_comparison_classification(aggregator: 'ConformalAggregator', save_path: str,
-                                         top_n: int = 10, top_n_detail: int = 5):
-    """
-    Model comparison for classification conformal prediction.
-
-    Layout (3 rows):
-      Row 0 (full width) : Horizontal bar chart – model ranking by mean singleton rate
-      Row 1 (left)       : Stacked bar per ADI bin for Top-N models
-      Row 1 (right)      : Stacked bar per ADI bin for Bottom-N models
-      Row 2 (full width) : Stacked bar — ADI-bin set-size breakdown per model
-                           (same style as mapie_plot_class.py)
-    """
-    # ---- Compute per-model stats ----------------------------------------
-    model_stats = []
-    for name in aggregator.model_names:
-        overall_mean = aggregator.model_all[name].mean
-        overall_std  = aggregator.model_all[name].std
-        total_count  = sum(aggregator.model_adi[name].counts.values())
-        model_stats.append((name, overall_mean, overall_std, total_count))
-
-    # Higher singleton rate = better for classification
-    model_stats.sort(key=lambda x: x[1], reverse=True)
-    n_models = len(model_stats)
-
-    if n_models > top_n * 2:
-        selected = model_stats[:top_n] + model_stats[-top_n:]
-        title_suffix = f'(Top & Bottom {top_n})'
-    else:
-        selected = model_stats
-        title_suffix = '(All Models)'
-
-    fig = plt.figure(figsize=(16, 14))
-    gs = fig.add_gridspec(3, 2, hspace=0.45, wspace=0.35)
-
-    cmap10 = plt.cm.tab10
-
-    # ------------------------------------------------------------------
-    # Row 0: Model ranking bar chart
-    # ------------------------------------------------------------------
-    ax1 = fig.add_subplot(gs[0, :])
-    names  = [s[0] for s in selected]
-    means  = [s[1] for s in selected]
-    stds   = [s[2] for s in selected]
-    colors_bar = ['green' if i < top_n else 'red' for i in range(len(selected))]
-    y_pos  = np.arange(len(names))
-    ax1.barh(y_pos, means, xerr=stds, capsize=3,
-             color=colors_bar, alpha=0.6, edgecolor='black')
-    ax1.set_yticks(y_pos)
-    ax1.set_yticklabels(names, fontsize=8)
-    ax1.set_xlabel('Mean Singleton Rate (%)', fontsize=11, fontweight='bold')
-    ax1.set_title(f'Model Ranking by Certainty {title_suffix}', fontsize=12, fontweight='bold')
-    ax1.grid(axis='x', alpha=0.3, linestyle='--')
-    ax1.invert_yaxis()
-    for i, (m, s) in enumerate(zip(means, stds)):
-        ax1.text(m + s + 0.3, i, f'{m:.2f}%', va='center', fontsize=8)
-
-    # ------------------------------------------------------------------
-    # Row 1 left: Stacked bar — Top-N models, singleton rate by ADI bin
-    # ------------------------------------------------------------------
-    ax2 = fig.add_subplot(gs[1, 0])
-    top_models    = [s[0] for s in model_stats[:top_n_detail]]
-    bottom_models = [s[0] for s in model_stats[-top_n_detail:]]
-
-    def _stacked_singleton_bars(ax, model_list, title):
-        """
-        For each ADI bin: one grouped set of bars, stacked singleton vs non-singleton.
-        Each model gets its own bar within the group.
-        """
-        n_m = len(model_list)
-        x   = np.arange(len(ADI_LABELS))
-        width = 0.8 / max(n_m, 1)
-
-        for i, model_name in enumerate(model_list):
-            mm = aggregator.model_adi[model_name].get_mean_metric()
-            singleton_pct = np.array([mm[k] for k in ADI_LABELS])
-            other_pct     = 100.0 - singleton_pct
-            offset = (i - n_m / 2 + 0.5) * width
-            color  = cmap10(i)
-
-            ax.bar(x + offset, singleton_pct, width=width * 0.9,
-                   color=color, alpha=0.85, edgecolor='black', linewidth=0.5,
-                   label=model_name[:18])
-            ax.bar(x + offset, other_pct, width=width * 0.9,
-                   bottom=singleton_pct, color=color, alpha=0.25,
-                   edgecolor='black', linewidth=0.5, hatch='//')
-
-        ax.set_xticks(x)
-        ax.set_xticklabels(ADI_LABELS, rotation=45, ha='right', fontsize=9)
-        ax.set_ylabel('Singleton Rate (%)', fontsize=10, fontweight='bold')
-        ax.set_ylim(0, 115)
-        ax.set_title(title, fontsize=10, fontweight='bold')
-        ax.grid(axis='y', alpha=0.3, linestyle='--')
-        ax.legend(fontsize=7, loc='lower right')
-        # Hatch legend
-        from matplotlib.patches import Patch
-        ax.legend(handles=[
-            *[plt.Rectangle((0, 0), 1, 1, fc=cmap10(i), alpha=0.85)
-              for i in range(n_m)],
-            Patch(fc='white', hatch='//', label='Non-singleton', edgecolor='black')
-        ], labels=[m[:18] for m in model_list] + ['Non-singleton'],
-           fontsize=7, loc='lower right', ncol=1)
-
-    _stacked_singleton_bars(ax2, top_models,
-                            f'Top {top_n_detail} Most Certain Models:\nSingleton Rate (%) by ADI Bin')
-
-    # ------------------------------------------------------------------
-    # Row 1 right: Stacked bar — Bottom-N models
-    # ------------------------------------------------------------------
-    ax3 = fig.add_subplot(gs[1, 1])
-    _stacked_singleton_bars(ax3, bottom_models,
-                            f'Bottom {top_n_detail} Least Certain Models:\nSingleton Rate (%) by ADI Bin')
-
-    # ------------------------------------------------------------------
-    # Row 2: Stacked bar across ALL ADI bins, one bar per ADI bin per model
-    # (style: singleton fraction stacked per model, sorted by overall rate)
-    # Shows set-size composition across models — the key summary chart.
-    # ------------------------------------------------------------------
-    ax4 = fig.add_subplot(gs[2, :])
-
-    # Use only models that appear in selected (top+bottom) to avoid clutter
-    display_models = [s[0] for s in selected]
-    n_disp = len(display_models)
-    x_m = np.arange(n_disp)
-
-    singleton_rates = np.array([
-        aggregator.model_all[m].mean for m in display_models
-    ])
-    other_rates = 100.0 - singleton_rates
-
-    bar_colors = ['#2E7D32' if i < top_n else '#C62828'
-                  for i in range(n_disp)]
-
-    ax4.bar(x_m, singleton_rates, color=bar_colors, alpha=0.85,
-            edgecolor='black', linewidth=0.5, label='Singleton (size=1)')
-    ax4.bar(x_m, other_rates, bottom=singleton_rates,
-            color=bar_colors, alpha=0.25, edgecolor='black',
-            linewidth=0.5, hatch='//', label='Non-singleton')
-
-    ax4.set_xticks(x_m)
-    ax4.set_xticklabels(display_models, rotation=45, ha='right', fontsize=7)
-    ax4.set_ylabel('Fraction of Predictions (%)', fontsize=11, fontweight='bold')
-    ax4.set_title('Overall Set-Size Composition by Model\n'
-                  '(solid = singleton, hatched = non-singleton)',
-                  fontsize=12, fontweight='bold')
-    ax4.set_ylim(0, 115)
-    ax4.grid(axis='y', alpha=0.3, linestyle='--')
-    ax4.axhline(50, color='navy', linestyle=':', linewidth=1, alpha=0.6)
     from matplotlib.patches import Patch
-    ax4.legend(handles=[
-        Patch(fc='#2E7D32', alpha=0.85, label='Top models – singleton'),
-        Patch(fc='#C62828', alpha=0.85, label='Bottom models – singleton'),
-        Patch(fc='white', hatch='//', edgecolor='black', label='Non-singleton'),
-    ], fontsize=9, loc='upper right')
+    from matplotlib.colors import Normalize
+    import matplotlib.cm as mpl_cm
+    from scipy.stats import spearmanr as _spearmanr
 
+    n_models = len(aggregator.model_names)
+
+    # ------------------------------------------------------------------ #
+    # Pre-compute global size-pct by ADI bin (exact counts)               #
+    # ------------------------------------------------------------------ #
+    global_sc = getattr(aggregator, 'global_size_counts', {})
+    all_sizes_seen = set()
+    for d in global_sc.values():
+        all_sizes_seen.update(d.keys())
+    max_sz = min(max(all_sizes_seen, default=1), 10)
+
+    # Build a DataFrame: rows = ADI bins, cols = set sizes
+    sz_matrix = pd.DataFrame(
+        index=ADI_LABELS,
+        columns=list(range(0, max_sz + 1)),
+        dtype=float
+    ).fillna(0.0)
+    singleton_pct_global = {}
+    total_by_bin = {}
+    for lbl in ADI_LABELS:
+        d = global_sc.get(lbl, {})
+        total = sum(d.values()) or 1
+        for sz in range(0, max_sz + 1):
+            sz_matrix.loc[lbl, sz] = 100.0 * d.get(sz, 0) / total
+        singleton_pct_global[lbl] = 100.0 * d.get(1, 0) / total
+        total_by_bin[lbl] = sum(d.values())
+
+    # ------------------------------------------------------------------ #
+    # Spearman: ADI bin rank vs singleton rate                            #
+    # (4 points — report but don’t over-interpret)                        #
+    # ------------------------------------------------------------------ #
+    adi_ranks = [1, 2, 3, 4]
+    sing_vals_global = [singleton_pct_global[lbl] for lbl in ADI_LABELS]
+    rho_global, pval_global = _spearmanr(adi_ranks, sing_vals_global)
+
+    # ------------------------------------------------------------------ #
+    # Per-model singleton rate (overall)                                   #
+    # ------------------------------------------------------------------ #
+    model_stats = [
+        (name, aggregator.model_all[name].mean,
+         sum(aggregator.model_adi[name].counts.values()))
+        for name in aggregator.model_names
+    ]
+    model_stats.sort(key=lambda x: x[1], reverse=True)   # highest first
+
+    # Heatmap data: model × ADI bin (singleton rate %)
+    heat_data = pd.DataFrame(
+        index=[s[0] for s in model_stats],
+        columns=ADI_LABELS,
+        dtype=float
+    )
+    for name, _, _ in model_stats:
+        mm = aggregator.model_adi[name].get_mean_metric()
+        for lbl in ADI_LABELS:
+            heat_data.loc[name, lbl] = mm.get(lbl, np.nan)
+
+    # ------------------------------------------------------------------ #
+    # Figure layout: 2 rows, 2 cols                                        #
+    #   Row 0, colspan 2  — Panel 1 (Certainty Gradient)
+    #   Row 1, col 0      — Panel 2 (Utility Ranking)
+    #   Row 1, col 1      — Panel 3 (Heatmap)
+    # ------------------------------------------------------------------ #
+    fig = plt.figure(figsize=(18, 10 + max(0, (n_models - 20) * 0.18)))
+    gs = fig.add_gridspec(
+        2, 2,
+        height_ratios=[1.0, max(1.8, n_models * 0.14)],
+        hspace=0.38, wspace=0.22
+    )
+
+    # ================================================================== #
+    # PANEL 1 — Certainty Gradient                                         #
+    #   Mirrors distance_by_adi_bins_classification / Plot 2              #
+    # ================================================================== #
+    ax1 = fig.add_subplot(gs[0, :])
+
+    # Use Spectral_r colourmap (same as reference)
+    cmap_spectral = plt.cm.Spectral_r
+    n_sizes = max_sz + 1
+    size_colors = [cmap_spectral(i / max(n_sizes - 1, 1)) for i in range(n_sizes)]
+
+    x_pos = np.arange(len(ADI_LABELS))
+    bar_w = 0.6
+    bottoms = np.zeros(len(ADI_LABELS))
+
+    for sz in range(0, max_sz + 1):
+        vals = sz_matrix[sz].values.astype(float)
+        label = '0 (empty)' if sz == 0 else ('1 (singleton)' if sz == 1 else str(sz))
+        ax1.bar(x_pos, vals, bar_w, bottom=bottoms,
+                color=size_colors[sz], edgecolor='black', linewidth=0.4,
+                label=label, alpha=0.92)
+        bottoms += vals
+
+    # Singleton rate overlay — grey line, right y-axis (hidden ticks)
+    # mirrors ax2r in distance_by_adi_bins_classification
+    ax1r = ax1.twinx()
+    ax1r.plot(x_pos, sing_vals_global,
+              color='gray', marker='o', linewidth=2.5,
+              markersize=8, linestyle='-', label='Singleton rate', zorder=5)
+    ax1r.set_ylim(0, 120)
+    ax1r.set_yticks([])
+    # Annotate each singleton point with value + N
+    for xi, lbl in enumerate(ADI_LABELS):
+        v = singleton_pct_global[lbl]
+        n = total_by_bin[lbl]
+        ax1r.text(xi, v + 4, f'{v:.0f}%\nN={n:,}',
+                  ha='center', fontsize=8.5, fontweight='bold', color='black')
+    ax1r.legend(loc='upper left', fontsize=8)
+
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels(ADI_LABELS, fontsize=10)
+    ax1.set_ylabel('Percentage of Predictions (%)', fontsize=11, fontweight='bold')
+    ax1.set_ylim(0, 105)
+    interp = '✓ Good' if rho_global > 0.3 else ('○ Weak' if rho_global > 0 else '⚠ Unexpected')
+    ax1.set_title(
+        f'Certainty Gradient: Label Set-Size Composition by Applicability Domain  '
+        f'(Spearman \u03c1 ADI vs singleton = {rho_global:.2f}, {interp})',
+        fontsize=12, fontweight='bold'
+    )
+    ax1.grid(axis='y', alpha=0.25, linestyle='--')
+
+    # Legend for set sizes (two columns, compact)
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    ax1.legend(handles1, labels1, title='Set size',
+               fontsize=8, title_fontsize=9,
+               loc='lower right', ncol=2, framealpha=0.85)
+
+    # ================================================================== #
+    # PANEL 2 — Model Utility Ranking                                      #
+    # ================================================================== #
+    ax2 = fig.add_subplot(gs[1, 0])
+
+    names_sorted  = [s[0] for s in model_stats]
+    rates_sorted  = [s[1] for s in model_stats]
+    colors_sorted = ['#2E7D32' if r >= utility_threshold else '#C62828'
+                     for r in rates_sorted]
+    y_pos2 = np.arange(len(names_sorted))
+
+    ax2.barh(y_pos2, rates_sorted, height=0.7,
+             color=colors_sorted, alpha=0.82, edgecolor='none', linewidth=0.4)
+    ax2.axvline(utility_threshold, color='navy', linestyle='--',
+                linewidth=1.8)
+    ax2.set_yticks(y_pos2)
+    ax2.set_yticklabels(names_sorted, fontsize=7)
+    ax2.set_xlabel('Singleton Rate (%)', fontsize=11, fontweight='bold')
+    ax2.set_title('Model Utility Ranking\n(singleton rate, all models)',
+                  fontsize=11, fontweight='bold')
+    ax2.set_xlim(0, 115)
+    ax2.invert_yaxis()   # highest at top
+    ax2.grid(axis='x', alpha=0.3, linestyle='--')
+
+    for i, r in enumerate(rates_sorted):
+        ax2.text(r + 1, i, f'{r:.1f}%', va='center', fontsize=6.5)
+
+    ax2.legend(handles=[
+        Patch(fc='#2E7D32', alpha=0.82, label=f'≥{utility_threshold:.0f}% (useful)'),
+        Patch(fc='#C62828', alpha=0.82, label=f'<{utility_threshold:.0f}% (uncertain)'),
+        plt.Line2D([0], [0], color='navy', linestyle='--', linewidth=1.8,
+                   label=f'Threshold {utility_threshold:.0f}%'),
+    ], fontsize=8, loc='lower right')
+
+    # ================================================================== #
+    # PANEL 3 — Reliability Heatmap                                        #
+    # ================================================================== #
+    ax3 = fig.add_subplot(gs[1, 1])
+
+    cmap_heat = mpl_cm.RdYlGn
+    norm_heat = Normalize(vmin=0, vmax=100)
+    im = ax3.imshow(
+        heat_data.values.astype(float),
+        aspect='auto', cmap=cmap_heat, norm=norm_heat,
+        interpolation='nearest'
+    )
+
+    ax3.set_xticks(np.arange(len(ADI_LABELS)))
+    ax3.set_xticklabels(ADI_LABELS, fontsize=9, rotation=30, ha='right')
+    ax3.set_yticks(np.arange(len(names_sorted)))
+    ax3.set_yticklabels(names_sorted, fontsize=7)
+    ax3.set_title('Reliability Heatmap\n(singleton rate % per model × ADI bin)',
+                  fontsize=11, fontweight='bold')
+
+    for r in range(len(names_sorted)):
+        for c in range(len(ADI_LABELS)):
+            val = heat_data.iloc[r, c]
+            if not np.isnan(val):
+                txt_color = 'white' if val < 35 or val > 75 else 'black'
+                ax3.text(c, r, f'{val:.0f}', ha='center', va='center',
+                         fontsize=6, color=txt_color, fontweight='bold')
+
+    plt.colorbar(im, ax=ax3, shrink=0.6, label='Singleton Rate (%)')
+
+    # ================================================================== #
     fig.suptitle(
-        f'Model Comparison Analysis (Classification)\n'
-        f'({len(aggregator.model_names)} models total)',
-        fontsize=14, fontweight='bold', y=0.998)
-
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    logger.info(f'Model comparison (classification) saved to: {save_path}')
+        f'Conformal Prediction – Classification Summary\n'
+        f'({aggregator.total_chemicals:,} predictions · {n_models} models)',
+        fontsize=14, fontweight='bold', y=1.002
+    )
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    logger.info(f'Classification summary saved to: {save_path}')
     plt.close()
 
 
@@ -1319,10 +1287,10 @@ def plot_model_comparison_regression(aggregator: 'ConformalAggregator', save_pat
     plt.close()
 
 
-# Dispatcher wrappers (keep old names working)
+# Dispatcher wrappers (keep old call sites working)
 def plot_global_analysis(aggregator, save_path):
     if aggregator.is_classification:
-        plot_global_analysis_classification(aggregator, save_path)
+        plot_classification_summary(aggregator, save_path)
     else:
         plot_global_analysis_regression(aggregator, save_path)
 
@@ -1330,8 +1298,8 @@ def plot_global_analysis(aggregator, save_path):
 def plot_model_comparison(aggregator, save_path, top_n=10, top_n_violin=5,
                           violins=False):
     if aggregator.is_classification:
-        plot_model_comparison_classification(aggregator, save_path,
-                                             top_n=top_n, top_n_detail=top_n_violin)
+        # Single figure covers both global + model comparison for classification
+        plot_classification_summary(aggregator, save_path)
     else:
         plot_model_comparison_regression(aggregator, save_path,
                                          top_n=top_n, top_n_detail=top_n_violin)
