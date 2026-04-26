@@ -1,0 +1,113 @@
+# pipeline.tutorial.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Separate Ploomber pipeline for the DM to models comparison experiment.
+# Runs independently of pipeline.mapie.yaml; shares only helper modules
+# (tasks/mapie_diagnostic.py, tasks/mapie_regression.py, tasks/descriptors/).
+#
+# Purpose
+# -------
+# Provides a self-contained illustration of conformal prediction 
+# Runs four CP variants on public datasets
+# (ESOL, Lipophilicity, or any user-supplied CSV/Excel) and produces
+# coverage + interval-width comparisons.
+#
+# Four variants
+# -------------
+#   A1  native_adaptive   – MAPIE trains the base model; sigma-normalised CP
+#   A2  native_plain      – MAPIE trains the base model; non-adaptive (plain) CP
+#   B1  external_adaptive – pre-fitted base model (mimics VEGA pipeline); adaptive CP
+#   B2  external_plain    – pre-fitted base model; non-adaptive CP
+#
+# Usage
+# -----
+#   ploomber build --entry-point pipeline.tutorial.yaml
+#   ploomber build --entry-point pipeline.tutorial.yaml --env--dataset lipo
+#
+# Parameters
+# ----------
+#   dataset    : "esol" | "lipo" | path to csv/xlsx  (default: esol)
+#   alpha      : miscoverage level                    (default: 0.1)
+#   ncm        : sigma-model key                      (default: rlgbmecfp)
+#   base_model : base model for the external variant  (default: lgbm)
+# ─────────────────────────────────────────────────────────────────────────────
+
+executor: serial
+
+meta:
+  extract_upstream: False
+
+tasks:
+
+  # ── Step 1: Download and split dataset ─────────────────────────────────────
+  - source: tasks/tutorial/load_dataset.py
+    name: "tutorial_load_[[dataset]]"
+    product:
+      nb:    "{{tutorial_OUTPUT}}/[[dataset]]/00_load.ipynb"
+      train: "{{tutorial_OUTPUT}}/[[dataset]]/data_train.xlsx"
+      test:  "{{tutorial_OUTPUT}}/[[dataset]]/data_test.xlsx"
+      meta:  "{{tutorial_OUTPUT}}/[[dataset]]/meta.json"
+    params:
+      smiles_col:   "smiles"
+      target_col:   null          # auto-detected for built-in datasets
+      test_size:    0.2
+      random_state: 42
+      cache_path:   "{{tutorial_CACHE}}"
+    grid:
+      dataset: "{{tutorial_datasets}}"
+
+
+  # ── Step 2A: MAPIE-native base model (Variant A1 + A2) ─────────────────────
+  - source: tasks/tutorial/mapie_native.py
+    name: "tutorial_native_[[dataset]]_[[ncm]]"
+    upstream:
+      - "tutorial_load_*"
+    product:
+      nb:               "{{tutorial_OUTPUT}}/[[dataset]]/01_native_[[ncm]].ipynb"
+      data:             "{{tutorial_OUTPUT}}/[[dataset]]/native_[[ncm]].xlsx"
+      ncmodel_adaptive: "{{tutorial_OUTPUT}}/[[dataset]]/native_[[ncm]]_adaptive.pkl"
+      ncmodel_plain:    "{{tutorial_OUTPUT}}/[[dataset]]/native_[[ncm]]_plain.pkl"
+    params:
+      alpha:      "{{tutorial_alpha}}"
+      cache_path: "{{tutorial_CACHE}}"
+    grid:
+      dataset: "{{tutorial_datasets}}"
+      ncm:     "{{tutorial_ncm}}"
+
+
+  # ── Step 2B: External pre-fitted base model (Variant B1 + B2) ───────────────
+  - source: tasks/tutorial/mapie_external.py
+    name: "tutorial_external_[[dataset]]_[[ncm]]_[[base_model]]"
+    upstream:
+      - "tutorial_load_*"
+    product:
+      nb:               "{{tutorial_OUTPUT}}/[[dataset]]/01_external_[[ncm]]_[[base_model]].ipynb"
+      data:             "{{tutorial_OUTPUT}}/[[dataset]]/external_[[ncm]]_[[base_model]].xlsx"
+      ncmodel_adaptive: "{{tutorial_OUTPUT}}/[[dataset]]/external_[[ncm]]_[[base_model]]_adaptive.pkl"
+      ncmodel_plain:    "{{tutorial_OUTPUT}}/[[dataset]]/external_[[ncm]]_[[base_model]]_plain.pkl"
+    params:
+      alpha:           "{{tutorial_alpha}}"
+      cache_path:      "{{tutorial_CACHE}}"
+    grid:
+      dataset:    "{{tutorial_datasets}}"
+      ncm:        "{{tutorial_ncm}}"
+      base_model: "{{tutorial_base_models}}"
+
+
+  # ── Step 3: Compare all four variants ───────────────────────────────────────
+  - source: tasks/tutorial/compare_variants.py
+    name: "tutorial_compare_[[dataset]]_[[ncm]]_[[base_model]]"
+    upstream:
+      - "tutorial_native_*"
+      - "tutorial_external_*"
+      - "tutorial_load_*"
+    product:
+      nb:           "{{tutorial_OUTPUT}}/[[dataset]]/02_compare_[[ncm]]_[[base_model]].ipynb"
+      data:         "{{tutorial_OUTPUT}}/[[dataset]]/compare_[[ncm]]_[[base_model]].xlsx"
+      plot_summary: "{{tutorial_OUTPUT}}/[[dataset]]/compare_coverage_width_[[ncm]]_[[base_model]].png"
+      plot_width:   "{{tutorial_OUTPUT}}/[[dataset]]/compare_width_dist_[[ncm]]_[[base_model]].png"
+    params:
+      alpha:         "{{tutorial_alpha}}"
+    grid:
+      dataset:    "{{tutorial_datasets}}"
+      ncm:        "{{tutorial_ncm}}"
+      base_model: "{{tutorial_base_models}}"
