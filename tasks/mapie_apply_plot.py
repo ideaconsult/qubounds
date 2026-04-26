@@ -95,77 +95,139 @@ class StreamingStats:
 
 @dataclass
 class TDigest:
-    """Simplified t-digest for quantile estimation"""
-    delta: float = 0.01  # Compression parameter
-    centroids: List[tuple] = field(default_factory=list)  # (mean, weight)
-    max_centroids: int = 100
-    
+    """
+    Histogram-based digest for distribution estimation.
+
+    Replaces the original centroid-based TDigest with a two-phase design:
+
+    Phase 1 – warm-up  (first `n_warmup` values, default 10 000)
+        Values are collected in a plain list so we can learn the data range
+        before committing to fixed bin edges.
+
+    Phase 2 – fixed-bin accumulation
+        Once the warm-up is complete we set bin edges from the observed
+        [min, max] range (with a small margin) and switch to O(1) per-value
+        accumulation.  This is exact for histogram queries and never merges
+        distinct peaks regardless of the value distribution.
+
+    The `centroids` attribute is kept for backward-compatibility with code
+    that calls `histogram()` or `quantile()` — it is synthesised on demand
+    from the bin counts.
+    """
+    n_bins: int = 200          # histogram resolution
+    n_warmup: int = 10_000     # values to collect before fixing bin edges
+    # internal state
+    _warmup_buf: List[float] = field(default_factory=list)
+    _bin_edges: Optional[np.ndarray] = field(default=None)
+    _bin_counts: Optional[np.ndarray] = field(default=None)
+    _total: int = 0
+
+    # ------------------------------------------------------------------ #
+    # Keep a `centroids` property so nothing that reads it breaks         #
+    # ------------------------------------------------------------------ #
+    @property
+    def centroids(self) -> List[tuple]:
+        """Synthesise (value, weight) pairs from bin counts (read-only)."""
+        if self._bin_edges is None or self._bin_counts is None:
+            return [(v, 1.0) for v in self._warmup_buf]
+        centers = (self._bin_edges[:-1] + self._bin_edges[1:]) / 2
+        return [
+            (float(c), float(w))
+            for c, w in zip(centers, self._bin_counts)
+            if w > 0
+        ]
+
+    @centroids.setter
+    def centroids(self, value):
+        """No-op setter – keeps old pickle-load code from crashing."""
+        pass  # state is held in _bin_edges / _bin_counts / _warmup_buf
+
+    # ------------------------------------------------------------------ #
+    # Public API                                                          #
+    # ------------------------------------------------------------------ #
     def add(self, value: float, weight: float = 1.0):
-        """Add a value to the digest"""
-        self.centroids.append((value, weight))
-        if len(self.centroids) > self.max_centroids:
-            self._compress()
-    
-    def add_batch(self, values: np.ndarray):
-        """Add multiple values"""
-        for v in values:
-            if not np.isnan(v):
-                self.add(v)
-    
-    def _compress(self):
-        """Merge centroids to maintain compression"""
-        if not self.centroids:
+        """Record a single observation (weight > 1 for bulk replay)."""
+        if np.isnan(value):
             return
-        
-        # Sort by value
-        self.centroids.sort(key=lambda x: x[0])
-        
-        # Simple compression: merge adjacent centroids
-        compressed = []
-        current_mean, current_weight = self.centroids[0]
-        
-        for mean, weight in self.centroids[1:]:
-            if len(compressed) < self.max_centroids // 2:
-                # Merge with current
-                total_weight = current_weight + weight
-                current_mean = (current_mean * current_weight + mean * weight) / total_weight
-                current_weight = total_weight
-            else:
-                compressed.append((current_mean, current_weight))
-                current_mean, current_weight = mean, weight
-        
-        compressed.append((current_mean, current_weight))
-        self.centroids = compressed
-    
-    def quantile(self, q: float) -> float:
-        """Estimate quantile q in [0, 1]"""
-        if not self.centroids:
-            return np.nan
-        
-        self.centroids.sort(key=lambda x: x[0])
-        total_weight = sum(w for _, w in self.centroids)
-        target = q * total_weight
-        
-        cumsum = 0
-        for mean, weight in self.centroids:
-            cumsum += weight
-            if cumsum >= target:
-                return mean
-        
-        return self.centroids[-1][0]
-    
+        weight = float(weight)
+        if self._bin_edges is None:
+            # Warm-up phase: store individual values.
+            # For bulk replay (weight > 1) expand into repeated entries so the
+            # warm-up buffer accurately represents the distribution shape.
+            # Cap expansion at 100 copies to avoid blowing up memory during merge.
+            copies = min(int(weight), 100)
+            self._warmup_buf.extend([float(value)] * copies)
+            self._total += int(weight)
+            if len(self._warmup_buf) >= self.n_warmup:
+                self._finalise_bins()
+        else:
+            idx = int(np.searchsorted(self._bin_edges, value, side='right')) - 1
+            idx = max(0, min(idx, self.n_bins - 1))
+            self._bin_counts[idx] += weight   # preserve exact weight
+            self._total += int(weight)
+
+    def add_batch(self, values: np.ndarray):
+        """Add multiple values efficiently."""
+        for v in values:
+            self.add(float(v))
+
+    def _finalise_bins(self):
+        """Switch from warm-up list to fixed histogram bins."""
+        arr = np.array(self._warmup_buf, dtype=float)
+        lo, hi = arr.min(), arr.max()
+        if lo == hi:
+            # Degenerate: all values identical – add a tiny margin
+            lo -= 0.5
+            hi += 0.5
+        else:
+            margin = (hi - lo) * 0.01
+            lo -= margin
+            hi += margin
+        self._bin_edges = np.linspace(lo, hi, self.n_bins + 1)
+        self._bin_counts = np.zeros(self.n_bins, dtype=float)
+        # Bin the warm-up buffer
+        indices = np.clip(
+            np.searchsorted(self._bin_edges, arr, side='right') - 1,
+            0, self.n_bins - 1
+        )
+        np.add.at(self._bin_counts, indices, 1.0)
+        self._warmup_buf = []   # free memory
+
     def histogram(self, bins: np.ndarray) -> np.ndarray:
-        """Get histogram counts for given bins"""
-        if not self.centroids:
-            return np.zeros(len(bins) - 1)
-        
-        counts = np.zeros(len(bins) - 1)
-        for mean, weight in self.centroids:
-            bin_idx = np.digitize(mean, bins) - 1
-            if 0 <= bin_idx < len(counts):
-                counts[bin_idx] += weight
-        
+        """Return counts re-binned onto the requested bin edges."""
+        if self._bin_edges is None:
+            # Still in warm-up: fall back to numpy histogram
+            if not self._warmup_buf:
+                return np.zeros(len(bins) - 1)
+            arr = np.array(self._warmup_buf)
+            counts, _ = np.histogram(arr, bins=bins)
+            return counts.astype(float)
+        # Re-bin: map each internal bin centre to the requested bins
+        centers = (self._bin_edges[:-1] + self._bin_edges[1:]) / 2
+        counts = np.zeros(len(bins) - 1, dtype=float)
+        for c, w in zip(centers, self._bin_counts):
+            if w == 0:
+                continue
+            idx = int(np.searchsorted(bins, c, side='right')) - 1
+            if 0 <= idx < len(counts):
+                counts[idx] += w
         return counts
+
+    def quantile(self, q: float) -> float:
+        """Estimate quantile q in [0, 1]."""
+        if self._bin_edges is None:
+            if not self._warmup_buf:
+                return np.nan
+            return float(np.quantile(self._warmup_buf, q))
+        total = self._bin_counts.sum()
+        if total == 0:
+            return np.nan
+        cumsum = np.cumsum(self._bin_counts)
+        target = q * total
+        idx = int(np.searchsorted(cumsum, target, side='left'))
+        idx = min(idx, self.n_bins - 1)
+        centers = (self._bin_edges[:-1] + self._bin_edges[1:]) / 2
+        return float(centers[idx])
 
 
 @dataclass
@@ -222,6 +284,50 @@ class BinnedAggregator:
 
 
 # -----------------------------
+# TDIGEST MERGE HELPER
+# -----------------------------
+
+def _merge_tdigest(src: TDigest, dst: TDigest,
+                   use_model_all: bool = False,
+                   model_adi: 'BinnedAggregator' = None):
+    """
+    Merge the contents of `src` TDigest into `dst` TDigest.
+
+    Strategy:
+    - If `src` has finalised bins (_bin_edges is set), iterate over its bin
+      centres and replay each (centre, count) into dst.add().
+    - If `src` is still in warm-up, replay the raw buffer values.
+    - The special-case `use_model_all=True` path is used by filter_models() to
+      build the global_digest from all per-ADI-bin digests of a model (because
+      we do not store a separate per-model global digest).
+    """
+    if use_model_all and model_adi is not None:
+        # Reconstruct from all ADI-bin digests of this model
+        for bin_label in ADI_LABELS:
+            _merge_tdigest(model_adi.digests[bin_label], dst)
+        return
+
+    if src is None:
+        return
+
+    # Guard against partially-old objects that lack the new internal attributes
+    bin_edges = getattr(src, '_bin_edges', None)
+    bin_counts = getattr(src, '_bin_counts', None)
+    warmup_buf = getattr(src, '_warmup_buf', [])
+
+    if bin_edges is not None and bin_counts is not None:
+        # Phase-2 source: replay bin-centre/count pairs
+        centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        for c, w in zip(centers, bin_counts):
+            if w > 0:
+                dst.add(c, weight=w)
+    else:
+        # Phase-1 source: replay raw warm-up values
+        for v in warmup_buf:
+            dst.add(v)
+
+
+# -----------------------------
 # MAIN AGGREGATOR
 # -----------------------------
 
@@ -240,6 +346,7 @@ class ConformalAggregator:
         # Per-model aggregators
         self.model_adi: Dict[str, BinnedAggregator] = {}
         self.model_all: Dict[str, StreamingStats] = {}
+        self.model_digest: Dict[str, TDigest] = {}  # per-model overall digest
         
         # Model metadata
         self.model_names = []
@@ -252,25 +359,31 @@ class ConformalAggregator:
         if model_name not in self.model_adi:
             self.model_adi[model_name] = BinnedAggregator(bins=ADI_LABELS)
             self.model_all[model_name] = StreamingStats()
+            self.model_digest[model_name] = TDigest()
             self.model_names.append(model_name)
         
         # Bin the data
         df['ADI_bin'] = pd.cut(df['ADI'], bins=ADI_BINS, labels=ADI_LABELS, include_lowest=True)
         
-        # Drop rows with missing values
+        # Update global_all and global_digest BEFORE dropping NaN ADI rows,
+        # so the overall distribution panel (Panel C) includes all molecules
+        # regardless of whether their ADI value falls in a named bin.
+        for v in df['metric'].dropna():
+            self.global_all.update(v)
+            self.global_digest.add(v)
+            self.model_digest[model_name].add(v)
+        self.total_chemicals += df['metric'].notna().sum()
+
+        # Drop rows with missing values for the ADI-binned aggregators only
         df_clean = df.dropna(subset=['ADI_bin', 'metric'])
-        
-        self.total_chemicals += len(df_clean)
         
         # Update global and per-model aggregators
         for _, row in df_clean.iterrows():
             adi_bin = row['ADI_bin']
             metric_value = row['metric']
             
-            # Global updates
+            # Global ADI-bin updates
             self.global_adi.update(adi_bin, metric_value)
-            self.global_all.update(metric_value)
-            self.global_digest.add(metric_value)
             
             # Per-model updates
             self.model_adi[model_name].update(adi_bin, metric_value)
@@ -294,6 +407,49 @@ class ConformalAggregator:
             logger.warning("Defaulting to is_classification=True (classification mode)")
             aggregator.is_classification = True
         
+        # Detect stale TDigest format: old version stored centroids as a plain
+        # list attribute; new version uses _bin_edges / _bin_counts.
+        # If we find any TDigest that has a plain-list `centroids` attribute
+        # (i.e. __dict__ contains 'centroids') the cache is incompatible and
+        # must be rebuilt.
+        def _is_stale_digest(d) -> bool:
+            return isinstance(d, TDigest) and 'centroids' in d.__dict__
+
+        stale = _is_stale_digest(aggregator.global_digest)
+        if not stale:
+            for model_name in aggregator.model_names:
+                for label in ADI_LABELS:
+                    if _is_stale_digest(aggregator.model_adi[model_name].digests.get(label)):
+                        stale = True
+                        break
+                if stale:
+                    break
+
+        if stale:
+            logger.warning("Cache was built with old TDigest format (centroid-based).")
+            logger.warning("Deleting stale cache — it will be rebuilt on next run.")
+            try:
+                Path(filepath).unlink()
+            except OSError as e:
+                logger.warning(f"Could not delete cache file: {e}")
+            raise ValueError(
+                f"Stale cache detected at {filepath!r}.\n"
+                "The cache was built with an incompatible TDigest format.\n"
+                "The file has been deleted. Re-run to rebuild the cache."
+            )
+
+        # Backward compat: caches built before model_digest was added
+        if not hasattr(aggregator, 'model_digest'):
+            logger.warning("Cache missing model_digest — rebuilding from ADI-bin digests")
+            aggregator.model_digest = {}
+            for model_name in aggregator.model_names:
+                d = TDigest()
+                for label in ADI_LABELS:
+                    src = aggregator.model_adi[model_name].digests.get(label)
+                    if src is not None:
+                        _merge_tdigest(src, d)
+                aggregator.model_digest[model_name] = d
+
         return aggregator
     
     def filter_models(self, excluded_models: List[str]) -> "ConformalAggregator":
@@ -318,31 +474,32 @@ class ConformalAggregator:
             if model_name in excluded_models:
                 continue
 
-            # Copy model-level stats
+            # Copy model-level stats (shared reference is fine – read-only after build)
             new_aggr.model_names.append(model_name)
             new_aggr.model_adi[model_name] = self.model_adi[model_name]
             new_aggr.model_all[model_name] = self.model_all[model_name]
+            new_aggr.model_digest[model_name] = self.model_digest[model_name]
 
             # Merge into global ADI bins
             for bin_label in ADI_LABELS:
                 new_aggr.global_adi.counts[bin_label] += self.model_adi[model_name].counts[bin_label]
 
-                # Merge StreamingStats (means & variance)
-                new_aggr.global_adi.stats[bin_label].merge(self.model_adi[model_name].stats[bin_label])
-
-                # Merge TDigest centroids
-                new_aggr.global_adi.digests[bin_label].centroids.extend(
-                    self.model_adi[model_name].digests[bin_label].centroids
+                # Merge StreamingStats (means & variance via Welford parallel merge)
+                new_aggr.global_adi.stats[bin_label].merge(
+                    self.model_adi[model_name].stats[bin_label]
                 )
 
-            # Merge overall stats
+                # Merge per-bin TDigest: replay bin counts from the source digest
+                src_digest = self.model_adi[model_name].digests[bin_label]
+                dst_digest = new_aggr.global_adi.digests[bin_label]
+                _merge_tdigest(src_digest, dst_digest)
+
+            # Merge overall StreamingStats
             new_aggr.global_all.merge(self.model_all[model_name])
 
-            # Merge global t-digest
-            if hasattr(self.global_digest, "centroids"):
-                new_aggr.global_digest.centroids.extend(
-                    self.global_digest.centroids
-                )
+            # Merge per-model digest into global_digest directly
+            # (model_digest includes ALL molecules, even those with NaN ADI)
+            _merge_tdigest(self.model_digest[model_name], new_aggr.global_digest)
 
             # Update total count
             new_aggr.total_chemicals += sum(self.model_adi[model_name].counts.values())
@@ -659,334 +816,526 @@ def write_statistics(aggregator: ConformalAggregator, base_path: str, higher_is_
 # PLOTTING FUNCTIONS
 # -----------------------------
 
-def plot_global_analysis(aggregator: ConformalAggregator, save_path: str):
-    """Create comprehensive global analysis plots"""
-    
-    metric_label = METRIC_LABEL
-    
+
+def plot_global_analysis_classification(aggregator: 'ConformalAggregator', save_path: str):
+    """
+    Global summary for classification conformal prediction.
+
+    Layout (2 x 2):
+      A (top-left)   : Mean singleton rate by ADI bin (bar chart)
+      B (top-right)  : Sample count by ADI bin
+      C (bottom-left): Stacked bar — set-size composition per ADI bin
+                       (singleton / size=2 / size>=3)
+                       Uses StreamingStats means stored per-bin.
+      D (bottom-right): CP robustness scatter (ADI centre vs mean singleton rate)
+    """
     fig = plt.figure(figsize=(14, 10))
-    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
-    
-    # Get statistics
-    mean_metric = aggregator.global_adi.get_mean_metric()
-    std_metric = aggregator.global_adi.get_std_metric()
-    
-    # ===== Row 1: Summary Statistics =====
-    
-    # A: Mean metric vs ADI (with error bars)
-    ax1 = fig.add_subplot(gs[0, 0])
-    
-    x_pos = np.arange(len(ADI_LABELS))
+    gs = fig.add_gridspec(2, 2, hspace=0.38, wspace=0.32)
+
+    mean_metric = aggregator.global_adi.get_mean_metric()   # mean singleton-rate (%)
+    std_metric  = aggregator.global_adi.get_std_metric()
+    adi_bin_centers = [0.25, 0.625, 0.8, 0.925]
+
     means = [mean_metric[k] for k in ADI_LABELS]
-    stds = [std_metric[k] for k in ADI_LABELS]
-    
-    ax1.bar(x_pos, means, yerr=stds, capsize=5, alpha=0.7, color='steelblue', edgecolor='navy')
+    stds  = [std_metric[k]  for k in ADI_LABELS]
+    counts = [aggregator.global_adi.counts[k] for k in ADI_LABELS]
+    x_pos = np.arange(len(ADI_LABELS))
+
+    # ------------------------------------------------------------------
+    # A: Mean singleton rate (%) by ADI bin
+    # ------------------------------------------------------------------
+    ax1 = fig.add_subplot(gs[0, 0])
+    # Use standard error rather than raw std (Bernoulli, so std ≈ 50 always)
+    se = [s / np.sqrt(max(c, 1)) for s, c in zip(stds, counts)]
+    ax1.bar(x_pos, means, yerr=se, capsize=5,
+            alpha=0.7, color='steelblue', edgecolor='navy')
     ax1.set_xticks(x_pos)
     ax1.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
-    ax1.set_ylabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
-    what = "Certainty" if aggregator.is_classification else "Efficiency"
-    ax1.set_title(f'A: {what} vs Applicability Domain', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Mean Singleton Rate (%)', fontsize=11, fontweight='bold')
+    ax1.set_title('A: Certainty vs Applicability Domain\n(error bars = standard error)', fontsize=11, fontweight='bold')
+    ax1.set_ylim(0, 115)
     ax1.grid(axis='y', alpha=0.3, linestyle='--')
-    
-    # B: Sample counts per ADI bin
+    for i, (m, s) in enumerate(zip(means, se)):
+        ax1.text(i, m + s + 2, f'{m:.1f}%', ha='center', va='bottom', fontsize=9)
+
+    # ------------------------------------------------------------------
+    # B: Sample count by ADI bin
+    # ------------------------------------------------------------------
     ax2 = fig.add_subplot(gs[0, 1])
-    counts = [aggregator.global_adi.counts[k] for k in ADI_LABELS]
     bars = ax2.bar(x_pos, counts, alpha=0.7, color='coral', edgecolor='darkred')
     ax2.set_xticks(x_pos)
     ax2.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
     ax2.set_ylabel('Number of Predictions', fontsize=11, fontweight='bold')
     ax2.set_title('B: Sample Distribution by ADI', fontsize=12, fontweight='bold')
     ax2.grid(axis='y', alpha=0.3, linestyle='--')
-    
-    # Add count labels on bars
-    for bar, count in zip(bars, counts):
-        height = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., height,
-                f'{count:,}', ha='center', va='bottom', fontsize=9)
-    
-    # ===== Row 2: Distributions and Correlation =====
-    
-    # C: Overall metric histogram
+    for bar, cnt in zip(bars, counts):
+        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                 f'{cnt:,}', ha='center', va='bottom', fontsize=9)
+
+    # ------------------------------------------------------------------
+    # C: Stacked bar — set-size composition per ADI bin
+    # The aggregator stores mean singleton-rate (%) as 'metric'.
+    # We also store means for size=0 and size>=2 via extra BinnedAggregators
+    # if available; otherwise we approximate from the singleton-rate mean:
+    #   singleton   = mean_metric / 100
+    #   non-singleton = 1 - singleton  (we cannot distinguish size=2 vs >=3 here)
+    # ------------------------------------------------------------------
     ax3 = fig.add_subplot(gs[1, 0])
-    
-    # Get approximate histogram from global t-digest
-    hist_bins = np.linspace(0, max(1, aggregator.global_all.mean + 3*aggregator.global_all.std), 50)
-    hist_counts = aggregator.global_digest.histogram(hist_bins)
-    
-    # Histogram as density
-    bin_centers = (hist_bins[:-1] + hist_bins[1:]) / 2
-    bin_widths = np.diff(hist_bins)
-    total_counts = hist_counts.sum()
 
-    # Convert counts to density
-    densities = hist_counts / (total_counts * bin_widths)
+    singleton_frac  = np.array([mean_metric[k] / 100.0 for k in ADI_LABELS])
+    other_frac      = 1.0 - singleton_frac
 
-    ax3.bar(bin_centers, densities, width=bin_widths, 
-            alpha=0.7, color='purple', edgecolor='darkviolet')
-    ax3.set_xlabel(metric_label, fontsize=11, fontweight='bold')
-    ax3.set_ylabel('Density', fontsize=11, fontweight='bold')
-    ax3.set_title(f'C: Overall {metric_label} Distribution', fontsize=12, fontweight='bold')
-    ax3.set_xlim([0, 1])
-    ax3.grid(axis='y', alpha=0.3, linestyle='--')
-    
-   # D: Metric-to-ADI correlation plot (demonstrating CP robustness)
-    ax4 = fig.add_subplot(gs[1, 1])
-    
-    # Create scatter data using bin centers and means
-    adi_bin_centers = [0.25, 0.625, 0.8, 0.925]  # Midpoints of ADI bins
-    means_for_scatter = [mean_metric[k] for k in ADI_LABELS]
-    sizes = [aggregator.global_adi.counts[k] / 1000 for k in ADI_LABELS]  # Scale for visibility
-    
-    # Plot with Metric on Y-axis, ADI on X-axis
-    ax4.scatter(adi_bin_centers, means_for_scatter, s=sizes, alpha=0.6, c='steelblue', edgecolors='navy')
-    
-    # Add trend line
-    z = np.polyfit(adi_bin_centers, means_for_scatter, 1)
-    p = np.poly1d(z)
-    x_trend = np.linspace(0, 1, 100)
-    ax4.plot(x_trend, p(x_trend), "r--", alpha=0.8, linewidth=2, label=f'Trend: y={z[0]:.3f}x+{z[1]:.3f}')
-    
-    # Calculate Spearman correlation (Metric to ADI)
-    spearman_corr, spearman_p = spearmanr(means_for_scatter, adi_bin_centers)
-    
-    # Interpretation based on task type and correlation direction
-    if aggregator.is_classification:
-        # Classification: expect positive correlation (high ADI → high confidence)
-        expected_sign = "positive"
-        if spearman_corr > 0.3:
-            interpretation = "✓ Good"
-        elif spearman_corr > 0:
-            interpretation = "○ Weak"
-        else:
-            interpretation = "⚠ Unexpected"
+    # Check if extended size stats are available
+    has_size_breakdown = hasattr(aggregator, 'global_adi_size2') and \
+                         hasattr(aggregator, 'global_adi_size3plus')
+
+    if has_size_breakdown:
+        size2_mean    = aggregator.global_adi_size2.get_mean_metric()
+        size3p_mean   = aggregator.global_adi_size3plus.get_mean_metric()
+        frac_size2    = np.array([size2_mean[k] / 100.0   for k in ADI_LABELS])
+        frac_size3p   = np.array([size3p_mean[k] / 100.0  for k in ADI_LABELS])
+        frac_empty    = np.clip(1.0 - singleton_frac - frac_size2 - frac_size3p, 0, 1)
+
+        ax3.bar(x_pos, singleton_frac * 100, label='Singleton (size=1)',
+                color='#2E7D32', alpha=0.85, edgecolor='black')
+        ax3.bar(x_pos, frac_size2 * 100, bottom=singleton_frac * 100,
+                label='Size = 2', color='#FF9800', alpha=0.85, edgecolor='black')
+        bottom2 = (singleton_frac + frac_size2) * 100
+        ax3.bar(x_pos, frac_size3p * 100, bottom=bottom2,
+                label='Size ≥ 3', color='#D32F2F', alpha=0.85, edgecolor='black')
+        bottom3 = bottom2 + frac_size3p * 100
+        ax3.bar(x_pos, frac_empty * 100, bottom=bottom3,
+                label='Empty set', color='#9E9E9E', alpha=0.85, edgecolor='black')
     else:
-        # Regression: expect negative correlation (high ADI → low interval width)
-        expected_sign = "negative"
-        if spearman_corr < -0.3:
-            interpretation = "✓ Good"
-        elif spearman_corr < 0:
-            interpretation = "○ Weak"
-        else:
-            interpretation = "⚠ Unexpected"
-    
+        # Fallback: singleton vs non-singleton only
+        ax3.bar(x_pos, singleton_frac * 100, label='Singleton (size=1)',
+                color='#2E7D32', alpha=0.85, edgecolor='black')
+        ax3.bar(x_pos, other_frac * 100, bottom=singleton_frac * 100,
+                label='Non-singleton (size≥2 or empty)', color='#D32F2F',
+                alpha=0.85, edgecolor='black')
+
+    ax3.set_xticks(x_pos)
+    ax3.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
+    ax3.set_ylabel('Fraction of Predictions (%)', fontsize=11, fontweight='bold')
+    ax3.set_title('C: Set-Size Composition by ADI Bin', fontsize=12, fontweight='bold')
+    ax3.set_ylim(0, 105)
+    ax3.legend(loc='lower right', fontsize=9)
+    ax3.grid(axis='y', alpha=0.3, linestyle='--')
+    # Label singleton % on bars
+    for i, f in enumerate(singleton_frac):
+        ax3.text(i, f * 100 / 2, f'{f*100:.1f}%',
+                 ha='center', va='center', fontsize=9,
+                 color='white', fontweight='bold')
+
+    # ------------------------------------------------------------------
+    # D: CP robustness — ADI bin centre vs mean singleton rate
+    # ------------------------------------------------------------------
+    ax4 = fig.add_subplot(gs[1, 1])
+    sizes_scatter = [c / 1000 for c in counts]
+    ax4.scatter(adi_bin_centers, means, s=sizes_scatter,
+                alpha=0.6, c='steelblue', edgecolors='navy')
+    z = np.polyfit(adi_bin_centers, means, 1)
+    p_poly = np.poly1d(z)
+    x_trend = np.linspace(0, 1, 100)
+    ax4.plot(x_trend, p_poly(x_trend), 'r--', alpha=0.8, linewidth=2,
+             label=f'Trend: y={z[0]:.3f}x+{z[1]:.3f}')
+
+    from scipy.stats import spearmanr as _spearmanr
+    rho, pval = _spearmanr(means, adi_bin_centers)
+    interpretation = '✓ Good' if rho > 0.3 else ('○ Weak' if rho > 0 else '⚠ Unexpected')
+
     ax4.set_xlabel('ADI (Applicability Domain Index)', fontsize=11, fontweight='bold')
-    ax4.set_ylabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
+    ax4.set_ylabel('Mean Singleton Rate (%)', fontsize=11, fontweight='bold')
     ax4.set_title(f'D: CP Robustness Check ({interpretation})\n'
-                  f'Spearman ρ = {spearman_corr:.3f} (p={spearman_p:.4f})',
-                  #f'Expected: {expected_sign} correlation', 
+                  f'Spearman ρ = {rho:.3f} (p={pval:.4f})',
                   fontsize=12, fontweight='bold')
     ax4.legend(loc='best', fontsize=9)
     ax4.grid(alpha=0.3, linestyle='--')
     ax4.set_xlim([0, 1])
 
-    # Overall title
-    task_type = "Classification" if aggregator.is_classification else "Regression"
-    fig.suptitle(f'Conformal Prediction Analysis - Global Summary ({task_type})\n({aggregator.total_chemicals:,} predictions across {len(aggregator.model_names)} models)', 
-                 fontsize=14, fontweight='bold', y=0.995)
-    
+    fig.suptitle(
+        f'Conformal Prediction Analysis – Global Summary (Classification)\n'
+        f'({aggregator.total_chemicals:,} predictions across {len(aggregator.model_names)} models)',
+        fontsize=14, fontweight='bold', y=0.998)
+
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    logger.info(f"Global analysis saved to: {save_path}")
+    logger.info(f'Global analysis (classification) saved to: {save_path}')
     plt.close()
 
 
-def plot_model_comparison(aggregator: ConformalAggregator, save_path: str,
-                          top_n: int = 10, top_n_violin: int = 5, 
-                          violins: bool = False):
-    """Compare performance across models
-    
-    Parameters
-    ----------
-    aggregator : ConformalAggregator
-        Aggregator containing model statistics
-    save_path : str
-        Path to save the figure
-    top_n : int, default=10
-        Number of top and bottom models to show in rankings
-    top_n_violin : int, default=5
-        Number of top models to show in distribution comparison
-    violins : bool, default=False
-        If True, use violin plots; if False, use boxplots
+def plot_model_comparison_classification(aggregator: 'ConformalAggregator', save_path: str,
+                                         top_n: int = 10, top_n_detail: int = 5):
     """
-    
-    metric_label = METRIC_LABEL
-    
-    # Calculate overall mean metric per model
+    Model comparison for classification conformal prediction.
+
+    Layout (3 rows):
+      Row 0 (full width) : Horizontal bar chart – model ranking by mean singleton rate
+      Row 1 (left)       : Stacked bar per ADI bin for Top-N models
+      Row 1 (right)      : Stacked bar per ADI bin for Bottom-N models
+      Row 2 (full width) : Stacked bar — ADI-bin set-size breakdown per model
+                           (same style as mapie_plot_class.py)
+    """
+    # ---- Compute per-model stats ----------------------------------------
     model_stats = []
-    for model_name in aggregator.model_names:
-        mean_metrics = aggregator.model_adi[model_name].get_mean_metric()
-        overall_mean = aggregator.model_all[model_name].mean
-        overall_std = aggregator.model_all[model_name].std
-        total_count = sum(aggregator.model_adi[model_name].counts.values())
-        model_stats.append((model_name, overall_mean, overall_std, total_count))
-    
-    # Sort by mean metric (direction depends on task type)
-    # Regression: lower = better (ascending)
-    # Classification: higher = better (descending)
-    reverse_sort = aggregator.is_classification
-    model_stats.sort(key=lambda x: x[1], reverse=reverse_sort)
-    
-    # Direction-dependent labels
-    ranking_label = "Certainty" if aggregator.is_classification else "Uncertainty"
-    
-    # Select top and bottom models
+    for name in aggregator.model_names:
+        overall_mean = aggregator.model_all[name].mean
+        overall_std  = aggregator.model_all[name].std
+        total_count  = sum(aggregator.model_adi[name].counts.values())
+        model_stats.append((name, overall_mean, overall_std, total_count))
+
+    # Higher singleton rate = better for classification
+    model_stats.sort(key=lambda x: x[1], reverse=True)
     n_models = len(model_stats)
+
     if n_models > top_n * 2:
         selected = model_stats[:top_n] + model_stats[-top_n:]
-        title_suffix = f"(Top & Bottom {top_n})"
+        title_suffix = f'(Top & Bottom {top_n})'
     else:
         selected = model_stats
-        title_suffix = "(All Models)"
-    
-    fig = plt.figure(figsize=(14, 12))
-    gs = fig.add_gridspec(3, 2, hspace=0.35, wspace=0.3)
-    
-    # Plot 1: Model ranking by mean metric
+        title_suffix = '(All Models)'
+
+    fig = plt.figure(figsize=(16, 14))
+    gs = fig.add_gridspec(3, 2, hspace=0.45, wspace=0.35)
+
+    cmap10 = plt.cm.tab10
+
+    # ------------------------------------------------------------------
+    # Row 0: Model ranking bar chart
+    # ------------------------------------------------------------------
     ax1 = fig.add_subplot(gs[0, :])
-    models = [s[0] for s in selected]
-    means = [s[1] for s in selected]
-    stds = [s[2] for s in selected]
-    
-    y_pos = np.arange(len(models))
-    # Green for best (top), red for worst (bottom)
-    colors = ['green' if i < top_n else 'red' for i in range(len(models))]
-    
-    ax1.barh(y_pos, means, xerr=stds, capsize=3, color=colors, alpha=0.6, edgecolor='black')
+    names  = [s[0] for s in selected]
+    means  = [s[1] for s in selected]
+    stds   = [s[2] for s in selected]
+    colors_bar = ['green' if i < top_n else 'red' for i in range(len(selected))]
+    y_pos  = np.arange(len(names))
+    ax1.barh(y_pos, means, xerr=stds, capsize=3,
+             color=colors_bar, alpha=0.6, edgecolor='black')
     ax1.set_yticks(y_pos)
-    ax1.set_yticklabels(models, fontsize=8)
-    ax1.set_xlabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
-    ax1.set_title(f'Model Ranking by {ranking_label} {title_suffix}', fontsize=12, fontweight='bold')
+    ax1.set_yticklabels(names, fontsize=8)
+    ax1.set_xlabel('Mean Singleton Rate (%)', fontsize=11, fontweight='bold')
+    ax1.set_title(f'Model Ranking by Certainty {title_suffix}', fontsize=12, fontweight='bold')
     ax1.grid(axis='x', alpha=0.3, linestyle='--')
     ax1.invert_yaxis()
-    
-    # Add mean value labels
-    for i, (mean, std) in enumerate(zip(means, stds)):
-        ax1.text(mean + std + 0.1, i, f'{mean:.2f}', va='center', fontsize=8)
-    
-    # Plot 2: Metric vs ADI for top models (best performers)
+    for i, (m, s) in enumerate(zip(means, stds)):
+        ax1.text(m + s + 0.3, i, f'{m:.2f}%', va='center', fontsize=8)
+
+    # ------------------------------------------------------------------
+    # Row 1 left: Stacked bar — Top-N models, singleton rate by ADI bin
+    # ------------------------------------------------------------------
     ax2 = fig.add_subplot(gs[1, 0])
-    for model_name in models[:5]:  # Top 5 best models
-        mean_metric = aggregator.model_adi[model_name].get_mean_metric()
-        metrics = [mean_metric[k] for k in ADI_LABELS]
-        ax2.plot(ADI_LABELS, metrics, marker='o', label=model_name[:20], linewidth=2, alpha=0.7)
-    
-    ax2.set_xlabel('ADI Bin', fontsize=11, fontweight='bold')
-    ax2.set_ylabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
-    ax2.set_title(f'Top 5 Best Models: {metric_label} vs ADI', fontsize=12, fontweight='bold')
-    ax2.legend(loc='best', fontsize=8)
-    ax2.grid(alpha=0.3, linestyle='--')
-    ax2.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
-    
-    # Plot 3: Metric vs ADI for bottom models (worst performers)
+    top_models    = [s[0] for s in model_stats[:top_n_detail]]
+    bottom_models = [s[0] for s in model_stats[-top_n_detail:]]
+
+    def _stacked_singleton_bars(ax, model_list, title):
+        """
+        For each ADI bin: one grouped set of bars, stacked singleton vs non-singleton.
+        Each model gets its own bar within the group.
+        """
+        n_m = len(model_list)
+        x   = np.arange(len(ADI_LABELS))
+        width = 0.8 / max(n_m, 1)
+
+        for i, model_name in enumerate(model_list):
+            mm = aggregator.model_adi[model_name].get_mean_metric()
+            singleton_pct = np.array([mm[k] for k in ADI_LABELS])
+            other_pct     = 100.0 - singleton_pct
+            offset = (i - n_m / 2 + 0.5) * width
+            color  = cmap10(i)
+
+            ax.bar(x + offset, singleton_pct, width=width * 0.9,
+                   color=color, alpha=0.85, edgecolor='black', linewidth=0.5,
+                   label=model_name[:18])
+            ax.bar(x + offset, other_pct, width=width * 0.9,
+                   bottom=singleton_pct, color=color, alpha=0.25,
+                   edgecolor='black', linewidth=0.5, hatch='//')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(ADI_LABELS, rotation=45, ha='right', fontsize=9)
+        ax.set_ylabel('Singleton Rate (%)', fontsize=10, fontweight='bold')
+        ax.set_ylim(0, 115)
+        ax.set_title(title, fontsize=10, fontweight='bold')
+        ax.grid(axis='y', alpha=0.3, linestyle='--')
+        ax.legend(fontsize=7, loc='lower right')
+        # Hatch legend
+        from matplotlib.patches import Patch
+        ax.legend(handles=[
+            *[plt.Rectangle((0, 0), 1, 1, fc=cmap10(i), alpha=0.85)
+              for i in range(n_m)],
+            Patch(fc='white', hatch='//', label='Non-singleton', edgecolor='black')
+        ], labels=[m[:18] for m in model_list] + ['Non-singleton'],
+           fontsize=7, loc='lower right', ncol=1)
+
+    _stacked_singleton_bars(ax2, top_models,
+                            f'Top {top_n_detail} Most Certain Models:\nSingleton Rate (%) by ADI Bin')
+
+    # ------------------------------------------------------------------
+    # Row 1 right: Stacked bar — Bottom-N models
+    # ------------------------------------------------------------------
     ax3 = fig.add_subplot(gs[1, 1])
-    for model_name in models[-5:]:  # Bottom 5 worst models
-        mean_metric = aggregator.model_adi[model_name].get_mean_metric()
-        metrics = [mean_metric[k] for k in ADI_LABELS]
-        ax3.plot(ADI_LABELS, metrics, marker='o', label=model_name[:20], linewidth=2, alpha=0.7)
-    
-    ax3.set_xlabel('ADI Bin', fontsize=11, fontweight='bold')
-    ax3.set_ylabel(f'Mean {metric_label}', fontsize=11, fontweight='bold')
-    ax3.set_title(f'Bottom 5 Worst Models: {metric_label} vs ADI', fontsize=12, fontweight='bold')
-    ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-    ax3.grid(alpha=0.3, linestyle='--')
-    ax3.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
-    
-    # Plot 4: Distribution comparison (violins or boxplots)
+    _stacked_singleton_bars(ax3, bottom_models,
+                            f'Bottom {top_n_detail} Least Certain Models:\nSingleton Rate (%) by ADI Bin')
+
+    # ------------------------------------------------------------------
+    # Row 2: Stacked bar across ALL ADI bins, one bar per ADI bin per model
+    # (style: singleton fraction stacked per model, sorted by overall rate)
+    # Shows set-size composition across models — the key summary chart.
+    # ------------------------------------------------------------------
     ax4 = fig.add_subplot(gs[2, :])
-    
-    # Top N models for distribution comparison
-    top_n_models = models[:top_n_violin]
-    positions_base = np.arange(len(ADI_LABELS)) * (top_n_violin + 1)
-    
-    # Use different colormap based on number of models
-    if top_n_violin <= 10:
-        cmap = plt.cm.tab10
-    else:
-        cmap = plt.cm.tab20
-    
-    if violins:
-        # Violin plots - use random sampling (set seed for reproducibility)
-        np.random.seed(42)
-        
-        for i, model_name in enumerate(top_n_models):
-            for j, label in enumerate(ADI_LABELS):
-                samples = aggregator.model_adi[model_name].get_all_values_approximation(label, n_samples=500)
-                
-                if len(samples) > 10:
-                    pos = positions_base[j] + i
-                    parts = ax4.violinplot([samples], positions=[pos], widths=0.8,
-                                          showmeans=True, showmedians=False)
-                    color = cmap(i)
-                    for pc in parts['bodies']:
-                        pc.set_facecolor(color)
-                        pc.set_alpha(0.7)
-    else:
-        # Boxplots - use pre-computed quantiles (deterministic, no sampling)
-        for i, model_name in enumerate(top_n_models):
-            for j, label in enumerate(ADI_LABELS):
-                # Get quantiles from t-digest (deterministic)
-                # Call quantile() separately for each value
-                q = [
-                    aggregator.model_adi[model_name].digests[label].quantile(0.0),    # min
-                    aggregator.model_adi[model_name].digests[label].quantile(0.25),   # Q1
-                    aggregator.model_adi[model_name].digests[label].quantile(0.5),    # median
-                    aggregator.model_adi[model_name].digests[label].quantile(0.75),   # Q3
-                    aggregator.model_adi[model_name].digests[label].quantile(1.0)     # max
-                ]
-                
-                if not any(np.isnan(q)):  # Check valid quantiles
-                    pos = positions_base[j] + i
-                    color = cmap(i)
-                    
-                    # Create boxplot from pre-computed statistics
-                    stats = [{
-                        'med': q[2],     # median
-                        'q1': q[1],      # Q1
-                        'q3': q[3],      # Q3
-                        'whislo': q[0],  # lower whisker (min)
-                        'whishi': q[4],  # upper whisker (max)
-                        'fliers': []     # no outliers
-                    }]
-                    
-                    bp = ax4.bxp(stats, positions=[pos], widths=0.7,
-                                patch_artist=True, showfliers=False,
-                                boxprops=dict(facecolor=color, alpha=0.7, edgecolor='black', linewidth=1),
-                                medianprops=dict(color='darkred', linewidth=2),
-                                whiskerprops=dict(color='black', linewidth=1),
-                                capprops=dict(color='black', linewidth=1))
-                    # Color the box (bxp returns dict with 'boxes' key)
-                    # Manually set box color
-                    bp['boxes'][0].set_facecolor(color)
-                    bp['boxes'][0].set_alpha(0.7)
-                    bp['boxes'][0].set_edgecolor('black')
-                    bp['boxes'][0].set_linewidth(1)           
-                    # Manually set median color
-                    bp['medians'][0].set_color(color)
-                    bp['medians'][0].set_linewidth(2)                        
-                    
-    # Set up x-axis
-    ax4.set_xticks(positions_base + (top_n_violin - 1) / 2)
-    ax4.set_xticklabels(ADI_LABELS)
-    ax4.set_xlabel('ADI Bin', fontsize=11, fontweight='bold')
-    ax4.set_ylabel(metric_label, fontsize=11, fontweight='bold')
-    plot_type = "Violin Plot" if violins else "Boxplot"
-    ax4.set_title(f'Distribution Comparison: Top {top_n_violin} Best Models by ADI ({plot_type})', 
+
+    # Use only models that appear in selected (top+bottom) to avoid clutter
+    display_models = [s[0] for s in selected]
+    n_disp = len(display_models)
+    x_m = np.arange(n_disp)
+
+    singleton_rates = np.array([
+        aggregator.model_all[m].mean for m in display_models
+    ])
+    other_rates = 100.0 - singleton_rates
+
+    bar_colors = ['#2E7D32' if i < top_n else '#C62828'
+                  for i in range(n_disp)]
+
+    ax4.bar(x_m, singleton_rates, color=bar_colors, alpha=0.85,
+            edgecolor='black', linewidth=0.5, label='Singleton (size=1)')
+    ax4.bar(x_m, other_rates, bottom=singleton_rates,
+            color=bar_colors, alpha=0.25, edgecolor='black',
+            linewidth=0.5, hatch='//', label='Non-singleton')
+
+    ax4.set_xticks(x_m)
+    ax4.set_xticklabels(display_models, rotation=45, ha='right', fontsize=7)
+    ax4.set_ylabel('Fraction of Predictions (%)', fontsize=11, fontweight='bold')
+    ax4.set_title('Overall Set-Size Composition by Model\n'
+                  '(solid = singleton, hatched = non-singleton)',
                   fontsize=12, fontweight='bold')
+    ax4.set_ylim(0, 115)
     ax4.grid(axis='y', alpha=0.3, linestyle='--')
-    
-    # Add legend
+    ax4.axhline(50, color='navy', linestyle=':', linewidth=1, alpha=0.6)
     from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor=cmap(i), alpha=0.7, edgecolor='black', 
-                             label=top_n_models[i][:20]) 
-                      for i in range(len(top_n_models))]
-    ax4.legend(handles=legend_elements, bbox_to_anchor=(1.02, 0.5), 
-              loc='center left', fontsize=9, ncol=1)
-    
-    fig.suptitle(f'Model Comparison Analysis\n({len(aggregator.model_names)} models total)', 
-                 fontsize=14, fontweight='bold', y=0.995)
-    
+    ax4.legend(handles=[
+        Patch(fc='#2E7D32', alpha=0.85, label='Top models – singleton'),
+        Patch(fc='#C62828', alpha=0.85, label='Bottom models – singleton'),
+        Patch(fc='white', hatch='//', edgecolor='black', label='Non-singleton'),
+    ], fontsize=9, loc='upper right')
+
+    fig.suptitle(
+        f'Model Comparison Analysis (Classification)\n'
+        f'({len(aggregator.model_names)} models total)',
+        fontsize=14, fontweight='bold', y=0.998)
+
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    logger.info(f"Model comparison saved to: {save_path}")
+    logger.info(f'Model comparison (classification) saved to: {save_path}')
     plt.close()
+
+
+# ---- Regression plotting functions (unchanged structure, clean separation) ----
+
+def plot_global_analysis_regression(aggregator: 'ConformalAggregator', save_path: str):
+    """
+    Global summary for regression conformal prediction (interval width).
+    Layout identical to original plot_global_analysis but regression-only.
+    """
+    fig = plt.figure(figsize=(14, 10))
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+
+    mean_metric = aggregator.global_adi.get_mean_metric()
+    std_metric  = aggregator.global_adi.get_std_metric()
+    adi_bin_centers = [0.25, 0.625, 0.8, 0.925]
+    means  = [mean_metric[k] for k in ADI_LABELS]
+    stds   = [std_metric[k]  for k in ADI_LABELS]
+    counts = [aggregator.global_adi.counts[k] for k in ADI_LABELS]
+    x_pos  = np.arange(len(ADI_LABELS))
+
+    # A: Mean interval width by ADI
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.bar(x_pos, means, yerr=stds, capsize=5,
+            alpha=0.7, color='steelblue', edgecolor='navy')
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
+    ax1.set_ylabel('Mean Relative Interval Width', fontsize=11, fontweight='bold')
+    ax1.set_title('A: Efficiency vs Applicability Domain', fontsize=12, fontweight='bold')
+    ax1.grid(axis='y', alpha=0.3, linestyle='--')
+
+    # B: Sample counts
+    ax2 = fig.add_subplot(gs[0, 1])
+    bars = ax2.bar(x_pos, counts, alpha=0.7, color='coral', edgecolor='darkred')
+    ax2.set_xticks(x_pos)
+    ax2.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
+    ax2.set_ylabel('Number of Predictions', fontsize=11, fontweight='bold')
+    ax2.set_title('B: Sample Distribution by ADI', fontsize=12, fontweight='bold')
+    ax2.grid(axis='y', alpha=0.3, linestyle='--')
+    for bar, cnt in zip(bars, counts):
+        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                 f'{cnt:,}', ha='center', va='bottom', fontsize=9)
+
+    # C: Interval width distribution histogram
+    ax3 = fig.add_subplot(gs[1, 0])
+    x_max = max(1.0, aggregator.global_all.mean + 3 * aggregator.global_all.std)
+    hist_bins  = np.linspace(0, x_max, 51)
+    hist_counts = aggregator.global_digest.histogram(hist_bins)
+    bin_centers = (hist_bins[:-1] + hist_bins[1:]) / 2
+    bin_widths  = np.diff(hist_bins)
+    total = hist_counts.sum()
+    if total > 0:
+        ax3.bar(bin_centers, hist_counts / (total * bin_widths),
+                width=bin_widths, alpha=0.7, color='purple', edgecolor='darkviolet')
+    else:
+        ax3.text(0.5, 0.5, 'No data', ha='center', va='center',
+                 transform=ax3.transAxes, fontsize=12, color='gray')
+    ax3.set_xlabel('Relative Interval Width', fontsize=11, fontweight='bold')
+    ax3.set_ylabel('Density', fontsize=11, fontweight='bold')
+    ax3.set_title('C: Overall Interval Width Distribution', fontsize=12, fontweight='bold')
+    ax3.set_xlim([0, x_max])
+    ax3.grid(axis='y', alpha=0.3, linestyle='--')
+
+    # D: CP robustness scatter
+    ax4 = fig.add_subplot(gs[1, 1])
+    sizes_sc = [c / 1000 for c in counts]
+    ax4.scatter(adi_bin_centers, means, s=sizes_sc,
+                alpha=0.6, c='steelblue', edgecolors='navy')
+    z = np.polyfit(adi_bin_centers, means, 1)
+    p_poly = np.poly1d(z)
+    x_trend = np.linspace(0, 1, 100)
+    ax4.plot(x_trend, p_poly(x_trend), 'r--', alpha=0.8, linewidth=2,
+             label=f'Trend: y={z[0]:.3f}x+{z[1]:.3f}')
+    from scipy.stats import spearmanr as _spearmanr
+    rho, pval = _spearmanr(means, adi_bin_centers)
+    interp = '✓ Good' if rho < -0.3 else ('○ Weak' if rho < 0 else '⚠ Unexpected')
+    ax4.set_xlabel('ADI (Applicability Domain Index)', fontsize=11, fontweight='bold')
+    ax4.set_ylabel('Mean Relative Interval Width', fontsize=11, fontweight='bold')
+    ax4.set_title(f'D: CP Robustness Check ({interp})\nSpearman ρ = {rho:.3f} (p={pval:.4f})',
+                  fontsize=12, fontweight='bold')
+    ax4.legend(loc='best', fontsize=9)
+    ax4.grid(alpha=0.3, linestyle='--')
+    ax4.set_xlim([0, 1])
+
+    fig.suptitle(
+        f'Conformal Prediction Analysis – Global Summary (Regression)\n'
+        f'({aggregator.total_chemicals:,} predictions across {len(aggregator.model_names)} models)',
+        fontsize=14, fontweight='bold', y=0.998)
+
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    logger.info(f'Global analysis (regression) saved to: {save_path}')
+    plt.close()
+
+
+def plot_model_comparison_regression(aggregator: 'ConformalAggregator', save_path: str,
+                                     top_n: int = 10, top_n_detail: int = 5):
+    """
+    Model comparison for regression conformal prediction.
+    Layout: ranking bar | line plots for top/bottom | distribution histogram grid.
+    """
+    model_stats = [
+        (name,
+         aggregator.model_all[name].mean,
+         aggregator.model_all[name].std,
+         sum(aggregator.model_adi[name].counts.values()))
+        for name in aggregator.model_names
+    ]
+    # Lower interval width = more efficient = better
+    model_stats.sort(key=lambda x: x[1], reverse=False)
+    n_models = len(model_stats)
+
+    if n_models > top_n * 2:
+        selected = model_stats[:top_n] + model_stats[-top_n:]
+        title_suffix = f'(Top & Bottom {top_n})'
+    else:
+        selected = model_stats
+        title_suffix = '(All Models)'
+
+    fig = plt.figure(figsize=(14, 12))
+    gs = fig.add_gridspec(3, 2, hspace=0.35, wspace=0.3)
+
+    # Row 0: ranking
+    ax1 = fig.add_subplot(gs[0, :])
+    names  = [s[0] for s in selected]
+    means  = [s[1] for s in selected]
+    stds   = [s[2] for s in selected]
+    colors_bar = ['green' if i < top_n else 'red' for i in range(len(selected))]
+    y_pos  = np.arange(len(names))
+    ax1.barh(y_pos, means, xerr=stds, capsize=3,
+             color=colors_bar, alpha=0.6, edgecolor='black')
+    ax1.set_yticks(y_pos)
+    ax1.set_yticklabels(names, fontsize=8)
+    ax1.set_xlabel('Mean Relative Interval Width', fontsize=11, fontweight='bold')
+    ax1.set_title(f'Model Ranking by Efficiency {title_suffix}\n(lower = narrower intervals = more efficient)', fontsize=12, fontweight='bold')
+    ax1.grid(axis='x', alpha=0.3, linestyle='--')
+    ax1.invert_yaxis()
+    for i, (m, s) in enumerate(zip(means, stds)):
+        ax1.text(m + s + 0.002, i, f'{m:.4f}', va='center', fontsize=8)
+
+    cmap10 = plt.cm.tab10
+
+    # Row 1: line plots — top / bottom
+    for ax, model_list, title in [
+        (fig.add_subplot(gs[1, 0]), [s[0] for s in model_stats[:top_n_detail]],
+         f'Top {top_n_detail} Efficient Models: Width vs ADI'),
+        (fig.add_subplot(gs[1, 1]), [s[0] for s in model_stats[-top_n_detail:]],
+         f'Bottom {top_n_detail} Inefficient Models: Width vs ADI'),
+    ]:
+        for i, name in enumerate(model_list):
+            mm = aggregator.model_adi[name].get_mean_metric()
+            vals = [mm[k] for k in ADI_LABELS]
+            ax.plot(ADI_LABELS, vals, marker='o', label=name[:20],
+                    linewidth=2, alpha=0.7, color=cmap10(i))
+        ax.set_xlabel('ADI Bin', fontsize=10, fontweight='bold')
+        ax.set_ylabel('Mean Interval Width', fontsize=10, fontweight='bold')
+        ax.set_title(title, fontsize=11, fontweight='bold')
+        ax.legend(fontsize=7, loc='best')
+        ax.grid(alpha=0.3, linestyle='--')
+        ax.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
+
+    # Row 2: stacked bar — mean interval width per model, colour-coded by bin
+    ax4 = fig.add_subplot(gs[2, :])
+    display_models = [s[0] for s in selected]
+    n_disp = len(display_models)
+    x_m = np.arange(n_disp)
+    bin_colors = ['#1565C0', '#388E3C', '#F57F17', '#B71C1C']  # one per ADI bin
+
+    bottoms = np.zeros(n_disp)
+    for b_idx, bin_label in enumerate(ADI_LABELS):
+        widths = np.array([
+            aggregator.model_adi[m].get_mean_metric().get(bin_label, 0.0)
+            for m in display_models
+        ])
+        ax4.bar(x_m, widths / len(ADI_LABELS), bottom=bottoms,
+                color=bin_colors[b_idx], alpha=0.8, edgecolor='black',
+                linewidth=0.4, label=bin_label)
+        bottoms += widths / len(ADI_LABELS)
+
+    ax4.set_xticks(x_m)
+    ax4.set_xticklabels(display_models, rotation=45, ha='right', fontsize=7)
+    ax4.set_ylabel('Mean Relative Interval Width (per bin, averaged)', fontsize=10, fontweight='bold')
+    ax4.set_title('Interval Width Breakdown by ADI Bin and Model', fontsize=12, fontweight='bold')
+    ax4.legend(title='ADI Bin', fontsize=9, loc='upper right')
+    ax4.grid(axis='y', alpha=0.3, linestyle='--')
+
+    fig.suptitle(
+        f'Model Comparison Analysis (Regression)\n'
+        f'({len(aggregator.model_names)} models total)',
+        fontsize=14, fontweight='bold', y=0.998)
+
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    logger.info(f'Model comparison (regression) saved to: {save_path}')
+    plt.close()
+
+
+# Dispatcher wrappers (keep old names working)
+def plot_global_analysis(aggregator, save_path):
+    if aggregator.is_classification:
+        plot_global_analysis_classification(aggregator, save_path)
+    else:
+        plot_global_analysis_regression(aggregator, save_path)
+
+
+def plot_model_comparison(aggregator, save_path, top_n=10, top_n_violin=5,
+                          violins=False):
+    if aggregator.is_classification:
+        plot_model_comparison_classification(aggregator, save_path,
+                                             top_n=top_n, top_n_detail=top_n_violin)
+    else:
+        plot_model_comparison_regression(aggregator, save_path,
+                                         top_n=top_n, top_n_detail=top_n_violin)
+
 
 # -----------------------------
 # MAIN EXECUTION

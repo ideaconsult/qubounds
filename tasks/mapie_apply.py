@@ -110,6 +110,11 @@ if enabled:
             elapsed_time = time.time() - start_time
             logger.debug(f"{data}\tpredict_conformal end (elapsed: {elapsed_time:.2f}s)")
             model_metrics = {}
+            # Normalise key capitalisation: regression returns 'Empirical coverage'
+            # (lowercase c) while classification returns 'Empirical Coverage'.
+            # Standardise to 'Empirical Coverage' so the Excel column is consistent.
+            if 'Empirical coverage' in metrics_per_model:
+                metrics_per_model['Empirical Coverage'] = metrics_per_model.pop('Empirical coverage')
             model_metrics[data] = metrics_per_model
             metrics_df = pd.DataFrame.from_dict(model_metrics, orient='index')
             metrics_df.index.name = 'Method Name'
