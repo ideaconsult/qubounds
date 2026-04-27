@@ -21,6 +21,16 @@ Inputs (ploomber params)
   alpha         : float
   product       : dict – {nb, data, plot_summary, plot_width}
 """
+import json
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from pathlib import Path
+from IPython.display import display, Markdown, HTML
+%matplotlib inline
+
 
 # + tags=["parameters"]
 alpha         = 0.1
@@ -31,13 +41,6 @@ ncm = None
 base_model = None
 # -
 
-import json
-import numpy as np
-import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from pathlib import Path
 
 Path(product["data"]).parent.mkdir(parents=True, exist_ok=True)
 
@@ -70,9 +73,9 @@ all_metrics = pd.concat([native_metrics, external_metrics], ignore_index=True)
 all_metrics["dataset"] = dataset
 all_metrics["1-alpha"] = 1 - alpha
 
-print(f"\n=== {dataset}  (α={alpha}, target coverage={1-alpha:.0%}) ===")
-print(all_metrics[["variant", "source", "coverage", "mean_width",
-                    "median_width", "sigma_r2"]].to_string(index=False))
+display(Markdown(f"## === {dataset}  (α={alpha}, target coverage={1-alpha:.0%}) ==="))
+display(Markdown(all_metrics[["variant", "source", "coverage", "mean_width",
+                    "median_width", "sigma_r2"]].to_string(index=False)))
 
 # ── collect per-compound widths for distribution plot ─────────────────────────
 width_frames = []
@@ -90,7 +93,6 @@ width_df = pd.concat(width_frames, ignore_index=True)
 
 # ── plot 1: coverage vs mean interval width ───────────────────────────────────
 fig, ax = plt.subplots(figsize=(7, 4))
-
 colors  = {"native": "#1f77b4", "external": "#ff7f0e"}
 markers = {"adaptive": "o", "plain": "s"}
 offset  = {"native_adaptive": (-0.003, 0.005),
@@ -126,20 +128,19 @@ ax.legend(by_label.values(), by_label.keys(), fontsize=8, loc="lower right")
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
 fig.savefig(product["plot_summary"], dpi=200, bbox_inches="tight")
+plt.show()
 plt.close(fig)
-print(f"Summary plot → {product['plot_summary']}")
+display(Markdown(f"- Summary plot → {product['plot_summary']}"))
 
 # ── plot 2: interval-width distributions ─────────────────────────────────────
 variants_order = width_df["variant"].unique().tolist()
 fig2, ax2 = plt.subplots(figsize=(8, 4))
-
 for vname in variants_order:
     vals = width_df.loc[width_df["variant"] == vname, "width"]
     try:
         ax2.hist(vals, alpha=0.5, label=vname, density=True, histtype="step", linewidth=2)
     except Exception as err:
         print(err)
-
 ax2.set_xlabel("Prediction Interval Width", fontsize=11)
 ax2.set_ylabel("Density", fontsize=11)
 ax2.set_title(f"{dataset}: Interval Width Distributions by Variant", fontsize=11)
@@ -147,12 +148,13 @@ ax2.legend(fontsize=8)
 ax2.grid(True, alpha=0.3)
 plt.tight_layout()
 fig2.savefig(product["plot_width"], dpi=200, bbox_inches="tight")
+plt.show()
 plt.close(fig2)
-print(f"Width distribution plot → {product['plot_width']}")
+display(Markdown(f"Width distribution plot → {product['plot_width']}"))
 
 # ── save summary Excel ────────────────────────────────────────────────────────
 with pd.ExcelWriter(product["data"], engine="xlsxwriter") as w:
     all_metrics.to_excel(w, sheet_name="Metrics", index=False)
     width_df.to_excel(w, sheet_name="Width_distributions", index=False)
 
-print(f"Summary Excel → {product['data']}")
+display(Markdown(f"Summary Excel → {product['data']}"))

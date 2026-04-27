@@ -40,6 +40,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from sklearn.model_selection import train_test_split
+from IPython.display import display, Markdown, HTML
 
 
 # ── built-in loaders ──────────────────────────────────────────────────────────
@@ -58,12 +59,10 @@ def _esol() -> pd.DataFrame:
 
 
 def _lipophilicity() -> pd.DataFrame:
-    """Lipophilicity (AstraZeneca, Wu et al. 2018) from DeepChem mirror."""
-    url = (
-        "https://raw.githubusercontent.com/deepchem/deepchem/"
-        "master/deepchem/molnet/load_functions/lipophilicity_raw.csv"
-    )
+    """Lipophilicity (AstraZeneca, Wu et al. 2018) from DeepChem S3 bucket."""
+    url = "https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/Lipophilicity.csv"
     df = pd.read_csv(url)
+    # columns: CMPD_CHEMBLID, exp, smiles
     df = df.rename(columns={"smiles": "Smiles", "exp": "Lipophilicity"})
     return df[["Smiles", "Lipophilicity"]]
 
@@ -108,8 +107,7 @@ train_df, test_df = train_test_split(df, test_size=test_size, random_state=rando
 train_df = train_df.reset_index(drop=True)
 test_df  = test_df.reset_index(drop=True)
 
-print(f"Dataset : {dataset}  |  target: {target_col}")
-print(f"Total={len(df)}  Train={len(train_df)}  Test={len(test_df)}")
+Markdown(f"## Dataset : {dataset}  |  target: {target_col}");Markdown(f"Total={len(df)}  Train={len(train_df)}  Test={len(test_df)}")
 
 # ── save ─────────────────────────────────────────────────────────────────────
 Path(product["train"]).parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +131,4 @@ meta = {
 with open(product["meta"], "w") as f:
     json.dump(meta, f, indent=2)
 
-print("train →", product["train"])
-print("test  →", product["test"])
-print("meta  →", product["meta"])
+Markdown(f"- train → {product['train']}");Markdown(f"- test  → {product['test']}");Markdown(f"- meta  → {product['meta']}")
