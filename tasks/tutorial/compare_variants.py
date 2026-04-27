@@ -99,7 +99,6 @@ offset  = {"native_adaptive": (-0.003, 0.005),
             "native_plain":   ( 0.003, 0.005),
             "external_adaptive": (-0.003, -0.008),
             "external_plain":    ( 0.003, -0.008)}
-
 for _, row in all_metrics.iterrows():
     src = row["source"]
     var_key = row["variant"].replace("_external", "").replace("_native", "")
@@ -112,7 +111,6 @@ for _, row in all_metrics.iterrows():
     ax.annotate(label, xy=(row["mean_width"], row["coverage"]),
                 xytext=(row["mean_width"] + dx, row["coverage"] + dy),
                 fontsize=8, ha="center")
-
 ax.axhline(1 - alpha, color="red", linestyle="--", linewidth=1.5,
            label=f"Target {1-alpha:.0%}")
 ax.set_xlabel("Mean Interval Width", fontsize=11)

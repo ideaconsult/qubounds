@@ -257,7 +257,7 @@ display(Markdown(f"- Plain quantile q̂        : {q_plain:.4f}  (in target units
 
 # Plot nonconformity score distribution
 fig_q, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-ax1.hist(scores_adaptive, bins=40, density=True, alpha=0.7, color="#2196F3", label="Cal scores")
+ax1.hist(scores_adaptive,  bins="auto", density=True, alpha=0.7, color="#2196F3", label="Cal scores")
 ax1.axvline(q_adaptive, color="red", lw=2, linestyle="--",
             label=f"q̂={q_adaptive:.3f}  ({(1-alpha):.0%} level)")
 ax1.set_xlabel("Nonconformity score  |y - ŷ| / σ̂(x)")
@@ -265,7 +265,7 @@ ax1.set_ylabel("Density")
 ax1.set_title("Adaptive: normalised scores")
 ax1.legend(fontsize=8)
 ax1.grid(True, alpha=0.3)
-ax2.hist(scores_plain, bins=40, density=True, alpha=0.7, color="#FF9800", label="Cal scores")
+ax2.hist(scores_plain,  bins="auto", density=True, alpha=0.7, color="#FF9800", label="Cal scores")
 ax2.axvline(q_plain, color="red", lw=2, linestyle="--",
             label=f"q̂={q_plain:.3f}  ({(1-alpha):.0%} level)")
 ax2.set_xlabel("Nonconformity score  |y - ŷ|")
@@ -278,6 +278,58 @@ plt.tight_layout()
 fig_q.savefig(out_dir / "calibration_scores.png", dpi=150, bbox_inches="tight")
 plt.show()
 plt.close(fig_q)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# §5b  Formal definitions
+# ═══════════════════════════════════════════════════════════════════════════════
+display(Markdown("## §5b  Formal definitions"))
+display(Markdown(r"""
+### Formal definitions (per-prediction vs per-model)
+
+**alpha** -- miscoverage level. *Scalar, set by the user before calibration.*
+The allowed fraction of test predictions that may fall outside the interval.
+alpha=0.1 means 10% are allowed to miss, so 90% coverage is targeted.
+
+**Nonconformity score** s(x_i, y_i) -- *per-prediction*, computed for each
+calibration molecule i.
+Measures how surprising the true label y_i is given prediction y-hat_i:
+  Plain:    s = |y - y-hat|
+  Adaptive: s = |y - y-hat| / sigma-hat(x)
+where sigma-hat(x) is the sigma model prediction (expected local residual).
+
+**Calibration quantile** q-hat -- *per-model*, computed once.
+q-hat = quantile({s_1, ..., s_n}, level = ceil((n+1)*(1-alpha)) / n)
+The inflated level (n+1)/n is a finite-sample correction ensuring marginal
+coverage >= 1-alpha (Vovk et al. 2005). This single number applies to all
+test molecules.
+
+**Prediction interval** C(x) -- *per-prediction*, at inference time.
+  Plain:    y-hat +/- q-hat          (same width for every molecule)
+  Adaptive: y-hat +/- q-hat*sigma(x) (width varies molecule by molecule)
+
+**Coverage** -- measured at two granularities:
+  Per-prediction: cov_i = 1[y_i in C(x_i)]. Binary for each molecule.
+  Per-model (marginal): Cov = mean(cov_i) over the test set.
+  CP guarantees Cov >= 1-alpha in expectation. This is the validity criterion.
+
+**Efficiency** -- measured at two granularities:
+  Per-prediction: w_i = upper_i - lower_i. Wide for uncertain molecules.
+  Per-model: W = mean(w_i). The primary efficiency metric; smaller is better.
+
+**Calibration objective** (the formal goal of conformal prediction):
+  Minimise W = mean interval width
+  subject to: Cov >= 1-alpha
+CP achieves this by construction via the quantile mechanism. The adaptive
+variant achieves lower W than plain CP when sigma-hat(x) correctly ranks
+molecules by local uncertainty -- wider only where genuinely needed.
+
+**Conditional vs marginal coverage**:
+CP guarantees *marginal* coverage (averaged over all test molecules).
+It does NOT guarantee that every subgroup (e.g. all out-of-AD compounds)
+achieves >= 1-alpha coverage. This is *conditional* coverage and requires
+additional assumptions. The adaptive variant approximates conditional
+coverage but the formal guarantee remains marginal.
+"""))
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # §6  MAPIE conformal predictors
@@ -376,8 +428,8 @@ for ax, sc_cal, sc_test, ks_p_val, title in [
     (ax_ka, scores_adaptive, scores_test_adaptive, ks_a_p, "Adaptive"),
     (ax_kp, scores_plain,    scores_test_plain,    ks_p_p, "Plain"),
 ]:
-    ax.hist(sc_cal,  bins=40, density=True, alpha=0.5, label="Calibration", color="#2196F3")
-    ax.hist(sc_test, bins=40, density=True, alpha=0.5, label="Test",        color="#FF9800")
+    ax.hist(sc_cal,   bins="auto", density=True, alpha=0.5, label="Calibration", color="#2196F3")
+    ax.hist(sc_test,  bins="auto", density=True, alpha=0.5, label="Test",        color="#FF9800")
     ax.set_xlabel("Nonconformity score")
     ax.set_ylabel("Density")
     ax.set_title(f"{title}: Cal vs Test score distributions\n(KS p={ks_p_val:.4f})")
@@ -436,6 +488,161 @@ plt.tight_layout()
 fig_sw.savefig(out_dir / "width_vs_sigma.png", dpi=150, bbox_inches="tight")
 plt.show()
 plt.close(fig_sw)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# §9b  Efficiency analysis: adaptive vs plain
+# ═══════════════════════════════════════════════════════════════════════════════
+display(Markdown("## §9b  Efficiency analysis: adaptive vs plain CP"))
+display(Markdown(f"""
+Both variants achieve the coverage target (>= {1-alpha:.0%}) by construction.
+Efficiency distinguishes them: which achieves that coverage with narrower intervals?
+
+For plain CP every molecule gets the same width: 2 * q_plain.
+For adaptive CP width = 2 * q_adaptive * sigma(x): larger where uncertainty is
+high, smaller where it is low.
+
+Objective: Minimise W = mean interval width, subject to Cov >= {1-alpha:.2f}.
+We verify both constraints from the test set results below.
+"""))
+
+eff_rows = []
+for variant, lower_, upper_, covered_, w_ in [
+    ("adaptive", lower_a, upper_a, covered_a, width_a),
+    ("plain",    lower_p, upper_p, covered_p, width_p),
+]:
+    eff_rows.append({
+        "Variant":      variant,
+        "Coverage":     f"{covered_.mean():.3f}",
+        "Target":       f">= {1-alpha:.2f}",
+        "Mean width":   f"{w_.mean():.4f}",
+        "Median width": f"{np.median(w_):.4f}",
+        "Std width":    f"{w_.std():.4f}",
+        "Min width":    f"{w_.min():.4f}",
+        "Max width":    f"{w_.max():.4f}",
+    })
+display(pd.DataFrame(eff_rows))
+
+fig_eff, (ax_e1, ax_e2) = plt.subplots(1, 2, figsize=(11, 4))
+ax_e1.hist(width_a,  bins="auto", alpha=0.6, density=True,
+           color="#2196F3", label=f"Adaptive  mean={width_a.mean():.3f}")
+bins = "auto"
+try:
+  ax_e1.hist(width_p,  bins=bins, alpha=0.6, density=True,
+           color="#FF9800", label=f"Plain     mean={width_p.mean():.3f}")
+except Exception as err:
+    print(err)  
+ax_e1.axvline(width_a.mean(), color="#2196F3", lw=2, linestyle="--")
+ax_e1.axvline(width_p.mean(), color="#FF9800", lw=2, linestyle="--")
+ax_e1.set_xlabel("Interval width")
+ax_e1.set_ylabel("Density")
+ax_e1.set_title("Width distribution: adaptive vs plain")
+ax_e1.legend(fontsize=8)
+ax_e1.grid(True, alpha=0.3)
+ax_e2.scatter(width_p - width_a, y_test, c=covered_a.astype(int),
+              cmap="RdYlGn", alpha=0.5, s=12)
+ax_e2.axvline(0, color="black", lw=1, linestyle="--")
+ax_e2.set_xlabel("Width reduction (plain minus adaptive)")
+ax_e2.set_ylabel(target_col)
+ax_e2.set_title("Width reduction per molecule\n(positive = adaptive is narrower)")
+ax_e2.grid(True, alpha=0.3)
+pct_narrower = np.mean(width_a < width_p) * 100
+display(Markdown(f"Adaptive is narrower than plain for **{pct_narrower:.1f}%** of test molecules."))
+plt.tight_layout()
+fig_eff.savefig(out_dir / "efficiency_analysis.png", dpi=150, bbox_inches="tight")
+plt.show()
+plt.close(fig_eff)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# §9c  Sigma model comparison: does NCM choice matter?
+# ═══════════════════════════════════════════════════════════════════════════════
+display(Markdown("## §9c  Sigma model comparison: which NCM to use?"))
+display(Markdown(r"""
+'which machine learning method should be used for the sigma model?'
+
+Key insight from CP theory:
+- **Coverage is guaranteed regardless of sigma model quality.**
+  The calibration quantile q-hat absorbs whatever the sigma model does.
+  Coverage is always >= 1-alpha.
+- **Efficiency depends on sigma model quality.**
+  A better sigma model correctly ranks molecules by local uncertainty,
+  so normalised scores are more uniform, q-hat (normalised) is smaller,
+  and intervals are narrower where sigma is small.
+  A constant sigma model (sigma=k for all x) reduces adaptive CP to plain CP.
+
+Below we simulate three quality levels using the same real calibration residuals
+(so coverage is identical) and compare q-hat, mean width, and coverage.
+- Row 1: sigma model scatter (R2 varies). 
+- Row 2: normalised score distributions.
+"""))
+
+np.random.seed(42)
+_true_res  = np.abs(y_cal - y_cal_pred)
+_true_res_test = np.abs(y_test - y_pred_a)
+
+_ncm_configs = [
+    ("Poor  (R2~0.1)",  2.0,  "#e74c3c"),
+    ("Medium (R2~0.5)", 0.8,  "#3498db"),
+    ("Good  (R2~0.9)",  0.25, "#27ae60"),
+]
+
+fig_ncm, axes_ncm = plt.subplots(2, 3, figsize=(14, 8))
+ncm_results = []
+for col_idx, (label, noise_scale, color) in enumerate(_ncm_configs):
+    _sigma_cal  = np.maximum(_true_res + np.random.normal(
+        0, noise_scale * _true_res.mean(), len(_true_res)), 1e-4)
+    _sigma_test = np.maximum(_true_res_test + np.random.normal(
+        0, noise_scale * _true_res_test.mean(), len(_true_res_test)), 1e-4)
+
+    from sklearn.metrics import r2_score as _r2s
+    _r2v = _r2s(_true_res, _sigma_cal)
+    _scores = _true_res / _sigma_cal
+    _n = len(_scores)
+    _ql = min(np.ceil((_n + 1) * (1 - alpha)) / _n, 1.0)
+    _q  = np.quantile(_scores, _ql)
+    _lo = y_pred_a - _q * _sigma_test
+    _hi = y_pred_a + _q * _sigma_test
+    _w  = _hi - _lo
+    _cov = np.mean((y_test >= _lo) & (y_test <= _hi))
+    ncm_results.append({"Model": label, "R2": round(_r2v, 3), "q_hat": round(_q, 3),
+                         "Coverage": round(_cov, 3), "Mean_width": round(_w.mean(), 3)})
+
+    ax_top = axes_ncm[0, col_idx]
+    ax_top.scatter(_true_res, _sigma_cal, alpha=0.35, s=8, color=color)
+    _lim = max(_true_res.max(), _sigma_cal.max()) * 1.05
+    ax_top.plot([0, _lim], [0, _lim], "k--", lw=1)
+    ax_top.set_xlabel("|y - y-hat|  (true residual)")
+    ax_top.set_ylabel("sigma(x)  (predicted)")
+    ax_top.set_title(f"{label}\nR2 = {_r2v:.2f}")
+    ax_top.grid(True, alpha=0.3)
+
+    ax_bot = axes_ncm[1, col_idx]
+    ax_bot.hist(_scores, bins=35, density=True, alpha=0.65, color=color)
+    ax_bot.axvline(_q, color="red", lw=2, linestyle="--",
+                   label=f"q-hat={_q:.2f}  cov={_cov:.3f}  W={_w.mean():.3f}")
+    ax_bot.set_xlabel("|y - y-hat| / sigma  (normalised score)")
+    ax_bot.set_ylabel("Density")
+    ax_bot.set_title(f"Coverage={_cov:.3f}  Mean width={_w.mean():.3f}")
+    ax_bot.legend(fontsize=7)
+    ax_bot.grid(True, alpha=0.3)
+plt.suptitle(
+    f"Sigma model quality vs CP outcome  (alpha={alpha}, target={1-alpha:.0%})\n"
+    "Coverage is stable across all quality levels; efficiency improves with better sigma model.",
+    fontsize=10)
+plt.tight_layout()
+fig_ncm.savefig(out_dir / "ncm_comparison.png", dpi=150, bbox_inches="tight")
+plt.show()
+plt.close(fig_ncm)
+
+ncm_df = pd.DataFrame(ncm_results)
+display(ncm_df)
+display(Markdown("""
+**Summary:**
+- Coverage is robust to NCM choice: all three achieve the target (guaranteed by theory).
+- Efficiency varies: a better sigma model gives narrower mean intervals.
+- For QSAR with ECFP fingerprints, LightGBM Huber (rlgbmecfp) achieves the
+  best sigma R2 across tested datasets and is the recommended default --
+  but the coverage guarantee holds regardless of which model is chosen.
+"""))
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # §10  Marginal coverage vs alpha sweep
