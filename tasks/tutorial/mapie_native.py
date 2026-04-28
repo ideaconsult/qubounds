@@ -1,83 +1,92 @@
-# -*- coding: utf-8 -*-
-"""
-tasks/tutorial/mapie_native.py
--------------------------------
-Tutorial: Conformal Prediction for QSAR – Regression
-======================================================
-
-This script is designed as an educational walk-through of split conformal
-prediction applied to molecular property prediction.  It introduces the core
-concepts step-by-step, with print statements that explain what each stage
-does and why.
-
-Key concepts illustrated
-------------------------
-  alpha (α)      : the allowed miscoverage rate (e.g. α=0.1 → 90 % intervals)
-  coverage       : the fraction of test samples whose true value falls inside
-                   the prediction interval. CP guarantees this ≥ 1-α on average.
-  efficiency     : how *narrow* the intervals are. A method that always outputs
-                   an infinite interval has perfect coverage but zero efficiency.
-  exchangeability: the assumption that calibration and test samples are drawn
-                   from the same distribution. Formally required for coverage
-                   guarantees; practically tested with a KS test.
-
-Two CP variants are compared
------------------------------
-  Adaptive (sigma-normalised) : interval width is molecule-specific, informed by
-                                a sigma model trained on ECFP fingerprints.
-                                Wide intervals for uncertain predictions,
-                                narrow for confident ones.
-  Plain (non-adaptive)        : a single fixed-width interval applied to all
-                                molecules regardless of local uncertainty.
-
-Inputs  (ploomber params)
----------
-  dataset      : dataset key (matches upstream load task)
-  alpha        : miscoverage level, default 0.1
-  ncm          : sigma-model key, default "rlgbmecfp"
-  cache_path   : ECFP SQLite cache path
-  product      : {nb, data, ncmodel_adaptive, ncmodel_plain}
-"""
 import json
 import pickle
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
-from scipy.stats import ks_2samp
-
-from lightgbm import LGBMRegressor
-from mapie.regression import SplitConformalRegressor
-from mapie.conformity_scores import ResidualNormalisedScore, AbsoluteConformityScore
+from IPython.display import display, Markdown
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score
+from scipy.stats import ks_2samp
+from lightgbm import LGBMRegressor
 
 from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
-from qubounds.mapie_diagnostic import (
-    make_sigma_model, sigma_diagnostics, detect_residual_degeneracy,
-)
-from IPython.display import display, Markdown, HTML
-%matplotlib inline
+from qubounds.mapie_diagnostic import make_sigma_model, sigma_diagnostics, detect_residual_degeneracy
+from qubounds.mapie_regression import train_conformal_regression, predict_conformal, ExternalPredictor
+# -*- coding: utf-8 -*-
+"""
+tasks/tutorial/mapie_native.py
+-------------------------------
+Tutorial: Conformal Prediction for QSAR - Regression
+=====================================================
 
+Demonstrates split conformal prediction using the SAME production functions
+from the main qubounds pipeline:
+  - train_conformal_regression()  from tasks.mapie_regression
+  - predict_conformal()           from tasks.mapie_regression
+  - ExternalPredictor             from tasks.mapie_regression
+
+Two modes are supported:
+
+  Mode 1 - Built-in base model (standard MAPIE)
+    MAPIE trains LightGBM on the fit set and wraps it with split CP.
+    The sigma model is trained on fit-set residuals with ECFP fingerprints.
+
+  Mode 2 - External predictions from file (mirrors the paper / VEGA pipeline)
+    Predictions are read from a CSV/Excel file (column: pred_col_external).
+    The sigma model is trained the same way; only the base predictor changes.
+    This is the exact mode used for VEGA models in the paper.
+
+Both variants are compared head-to-head on coverage and efficiency.
+
+Key concepts illustrated (per-prediction vs per-model):
+  alpha         - miscoverage level (scalar, user-set)
+  sigma model   - predicts local residual magnitude per molecule
+  q_hat         - (1-alpha) quantile of calibration scores (per-model)
+  Coverage      - per-prediction: in-interval indicator; per-model: mean
+  Efficiency    - per-prediction: interval width; per-model: mean width
+  Objective     - minimise mean width subject to coverage >= 1-alpha
+  Exchangeability - KS test: calibration vs test score distributions
+  NCM comparison  - coverage is stable regardless of sigma model quality;
+                    efficiency improves with better sigma model
+
+Inputs (ploomber params)
+---------
+  dataset            : dataset key matching upstream load task
+  alpha              : miscoverage level (default 0.1)
+  ncm                : sigma-model key (default rlgbmecfp)
+  cache_path         : ECFP SQLite cache path
+  external_pred_file : optional path to CSV/Excel with external predictions
+                       columns: Smiles, <external_pred_col>, [<true_col>]
+  external_pred_col  : column name for external predictions (default "Pred")
+  external_true_col  : column name for true values in external file (default "Exp")
+  product            : {nb, data, ncmodel_adaptive, ncmodel_plain}
+"""
 
 # + tags=["parameters"]
-alpha      = 0.1
-ncm        = "rlgbmecfp"
-cache_path = None
-product    = None
-upstream   = None
-dataset    = None
+alpha              = 0.1
+ncm                = "rlgbmecfp"
+cache_path         = None
+product            = None
+upstream           = None
+dataset            = None
+external_pred_file = None   # set to a file path to run Mode 2
+external_pred_col  = "Pred"
+external_true_col  = "Exp"
 # -
 
+
+matplotlib.use("Agg")
+%matplotlib inline
 
 Path(product["data"]).parent.mkdir(parents=True, exist_ok=True)
 out_dir = Path(product["data"]).parent
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §0  Resolve upstream paths
-# ═══════════════════════════════════════════════════════════════════════════════
-tag       = f"tutorial_load_{dataset}"
+# ==============================================================================
+# S0  Resolve upstream paths
+# ==============================================================================
+tag        = f"tutorial_load_{dataset}"
 train_data = upstream["tutorial_load_*"][tag]["train"]
 test_data  = upstream["tutorial_load_*"][tag]["test"]
 meta_path  = upstream["tutorial_load_*"][tag]["meta"]
@@ -86,26 +95,90 @@ with open(meta_path) as f:
     meta = json.load(f)
 target_col = meta["target_col"]
 
-display(Markdown(f"#  CONFORMAL PREDICTION TUTORIAL – REGRESSION"))
-display(Markdown(f"##  Dataset : {meta['dataset']}   Target : {target_col}"))
+display(Markdown("# CONFORMAL PREDICTION TUTORIAL - REGRESSION"))
+display(Markdown(f"## Dataset: {meta['dataset']}   Target: {target_col}"))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §1  Data splits
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §1  Data splits"))
+# ==============================================================================
+# S1  Formal definitions
+# ==============================================================================
+display(Markdown("## S1  Formal definitions"))
+display(Markdown(r"""
+### Formal definitions (per-prediction vs per-model)
 
+**alpha** -- miscoverage level. *Scalar, set by the user.*
+The allowed fraction of test predictions that may fall outside the interval.
+alpha=0.1 means 10% may miss => 90% coverage targeted.
+
+---
+
+**Nonconformity score** s(x_i, y_i) -- *per-prediction*, on calibration set.
+
+  Adaptive: s = |y - y_hat| / sigma_hat(x)
+  Plain:    s = |y - y_hat|
+
+where sigma_hat(x) is the sigma model prediction of expected local residual.
+Higher score = more surprising = model less reliable at this molecule.
+
+---
+
+**Calibration quantile** q_hat -- *per-model*, computed once from all n calibration scores.
+
+  q_hat = quantile({s_1, ..., s_n}, level = ceil((n+1)*(1-alpha)) / n)
+
+The inflated level (n+1)/n is a finite-sample correction ensuring
+marginal coverage exactly >= 1-alpha (Vovk et al. 2005).
+
+---
+
+**Prediction interval** C(x) -- *per-prediction*, at inference time.
+
+  Adaptive: y_hat +/- q_hat * sigma_hat(x)   (molecule-specific width)
+  Plain:    y_hat +/- q_hat                   (same width for all molecules)
+
+---
+
+**Coverage** -- two granularities:
+  Per-prediction:  cov_i = 1[y_i in C(x_i)]        (binary per molecule)
+  Per-model:       Cov = mean(cov_i) over test set   (validity criterion)
+  CP guarantee:    Cov >= 1-alpha in expectation.
+
+---
+
+**Efficiency** -- two granularities:
+  Per-prediction:  w_i = upper_i - lower_i          (interval width)
+  Per-model:       W = mean(w_i)                     (primary efficiency metric)
+
+---
+
+**Calibration objective:**
+  Minimise W = mean interval width
+  subject to: Cov >= 1-alpha
+
+CP achieves this by construction. The adaptive variant achieves lower W than
+plain when sigma_hat(x) correctly ranks molecules by local uncertainty.
+
+---
+
+**Conditional vs marginal coverage:**
+CP guarantees *marginal* coverage (averaged over all test molecules).
+Per-subgroup coverage (e.g. only out-of-AD compounds) is not guaranteed.
+The adaptive variant approximates conditional coverage but the formal
+guarantee remains marginal.
+"""))
+
+# ==============================================================================
+# S2  Data splits
+# ==============================================================================
+display(Markdown("## S2  Data splits"))
 display(Markdown("""
 Split conformal prediction requires THREE disjoint sets:
 
-  Fit set        → train the base (QSAR) model
-  Calibration set→ compute nonconformity scores; determine the quantile
-                   threshold that controls coverage.  This set is CONSUMED
-                   by the conformal procedure and not used for test evaluation.
-  Test set       → evaluate coverage and efficiency on fresh molecules.
+  Fit set         -> train base model + sigma model
+  Calibration set -> compute nonconformity scores; derive q_hat
+  Test set        -> evaluate coverage and efficiency
 
-The calibration set must be EXCHANGEABLE with the test set:
-informally, both should look like independent draws from the same
-distribution.  We verify this with a Kolmogorov-Smirnov test later.
+The calibration set is CONSUMED by the conformal procedure.
+Exchangeability between calibration and test is verified with a KS test.
 """))
 
 train_df = pd.read_excel(train_data, sheet_name="Training")
@@ -117,19 +190,14 @@ fit_df, cal_df = train_test_split(train_df, test_size=0.2, random_state=42)
 fit_df = fit_df.reset_index(drop=True)
 cal_df = cal_df.reset_index(drop=True)
 
-display(Markdown(f"- Fit set          : {len(fit_df):>5d} molecules"))
-display(Markdown(f"- Calibration set  : {len(cal_df):>5d} molecules"))
-display(Markdown(f"- Test set         : {len(test_df):>5d} molecules"))
+display(Markdown(f"- Fit set         : {len(fit_df)} molecules"))
+display(Markdown(f"- Calibration set : {len(cal_df)} molecules"))
+display(Markdown(f"- Test set        : {len(test_df)} molecules"))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §2  Molecular fingerprints
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §2  Molecular fingerprints (ECFP4, 2048 bits)"))
-display(Markdown("""
-Extended Connectivity Fingerprints (ECFP) encode local chemical
-neighbourhoods as bit vectors.  We use radius 4, 2048 bits (ECFP4).
-Results are cached in SQLite to avoid recomputation.
-"""))
+# ==============================================================================
+# S3  Fingerprints
+# ==============================================================================
+display(Markdown("## S3  Molecular fingerprints (ECFP4, 2048 bits)"))
 
 init_cache(cache_path)
 
@@ -137,624 +205,450 @@ def to_ecfp(df_):
     return np.array([smiles_to_ecfp_cached(s) for s in df_["Smiles"].values])
 
 X_fit  = to_ecfp(fit_df)
-display(Markdown(f"- X_fit  : {X_fit.shape}"))
 X_cal  = to_ecfp(cal_df)
-display(Markdown(f"- X_cal  : {X_cal.shape}"))
 X_test = to_ecfp(test_df)
-display(Markdown(f"- X_test : {X_test.shape}"))
-y_fit = fit_df[target_col].values.astype(float)
-y_cal = cal_df[target_col].values.astype(float)
+
+y_fit  = fit_df[target_col].values.astype(float)
+y_cal  = cal_df[target_col].values.astype(float)
 y_test = test_df[target_col].values.astype(float)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §3  Base QSAR model
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §3  Base QSAR model (LightGBM)"))
-display(Markdown("""
-The base model is a LightGBM regressor with a Huber loss (robust to outliers).
-It is trained ONLY on the fit set; the calibration set is withheld.
+# ==============================================================================
+# S4  Base model and sigma model
+# ==============================================================================
+display(Markdown("## S4  Base model and sigma model"))
+display(Markdown(f"""
+The sigma model predicts |y - y_hat| from ECFP fingerprints.
+It is trained on fit-set residuals using: {ncm}
+
+Key insight: a low sigma model R2 does NOT invalidate CP coverage.
+The calibration quantile q_hat provides the coverage guarantee regardless.
+A better sigma model gives narrower intervals (better efficiency).
 """))
 
+# Train base model on fit set
 base_model = LGBMRegressor(objective="huber", random_state=42, verbose=-1)
 base_model.fit(X_fit, y_fit)
 y_fit_pred = base_model.predict(X_fit)
 y_cal_pred = base_model.predict(X_cal)
+y_test_pred_internal = base_model.predict(X_test)
 
-from sklearn.metrics import r2_score
-r2_fit = r2_score(y_fit, y_fit_pred)
 r2_cal = r2_score(y_cal, y_cal_pred)
-display(Markdown(f"- Base model R² on fit set  : {r2_fit:.3f}"))
-display(Markdown(f"- Base model R² on cal set  : {r2_cal:.3f}  (honest estimate)"))
+display(Markdown(f"- Base model R2 on cal set: {r2_cal:.3f}  (honest estimate)"))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §4  Sigma (nonconformity) model
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §4  Sigma model – predicting local error magnitude"))
-display(Markdown(f"""
-The sigma model predicts |y - ŷ| for each molecule from its ECFP fingerprint.
-This gives an *expected residual* σ̂(x) that varies across chemical space.
-
-  - σ̂ small → the QSAR model is typically accurate here  → narrow interval
-  - σ̂ large → the QSAR model is typically uncertain here  → wide interval
-
-σ̂ is trained on the fit-set residuals using: {ncm}
-It is evaluated on the calibration set to assess generalisation.
-"""))
-
+# Train sigma model
 residuals_fit = np.abs(y_fit - y_fit_pred)
-use_eps, diag = detect_residual_degeneracy(residuals_fit, y_fit)
-
+_, diag_res = detect_residual_degeneracy(residuals_fit, y_fit)
 sigma_model = make_sigma_model(ncm)
 sigma_model.fit(X_fit, residuals_fit)
+sigma_pred_fit = sigma_model.predict(X_fit)
+sigma_pred_cal = sigma_model.predict(X_cal)
+sigma_pred_test = sigma_model.predict(X_test)
+diag_s = sigma_diagnostics(residuals_fit, sigma_pred_fit)
+diag_s_cal = sigma_diagnostics(np.abs(y_cal - y_cal_pred), sigma_pred_cal)
 
-sigma_fit_pred = sigma_model.predict(X_fit)
-sigma_cal_pred = sigma_model.predict(X_cal)
-sigma_test_pred = sigma_model.predict(X_test)
+display(Markdown(f"- Sigma model R2 on fit set : {diag_s['r2']:.3f}"))
+display(Markdown(f"- Sigma model R2 on cal set : {diag_s_cal['r2']:.3f}"))
 
-diag_sigma = sigma_diagnostics(residuals_fit, sigma_fit_pred)
-diag_sigma_cal = sigma_diagnostics(np.abs(y_cal - y_cal_pred), sigma_cal_pred)
-
-display(Markdown(f"- Sigma R² on fit set  : {diag_sigma['r2']:.3f}"))
-display(Markdown(f"- Sigma R² on cal set  : {diag_sigma_cal['r2']:.3f}"))
-display(Markdown("""
-  Note: a low R² for the sigma model does not invalidate CP coverage.
-  Coverage is guaranteed by the calibration quantile regardless of sigma model
-  quality.  However, a better sigma model → narrower intervals (better efficiency).
-"""))
-
-# Sigma model scatter plot
+# Sigma scatter plot
 fig_s, ax_s = plt.subplots(figsize=(5, 4))
-ax_s.scatter(residuals_fit, sigma_fit_pred, alpha=0.3, s=8, label="Fit set")
-ax_s.scatter(np.abs(y_cal - y_cal_pred), sigma_cal_pred, alpha=0.3, s=8, c="orange", label="Cal set")
-lim = max(residuals_fit.max(), sigma_fit_pred.max()) * 1.05
-ax_s.plot([0, lim], [0, lim], "k--", lw=1, label="Perfect σ")
-ax_s.set_xlabel("Actual residual |y - ŷ|")
-ax_s.set_ylabel("Predicted σ̂(x)")
-ax_s.set_title(f"Sigma model: predicted vs actual residual\n({ncm}, R²_cal={diag_sigma_cal['r2']:.3f})")
+ax_s.scatter(residuals_fit, sigma_pred_fit, alpha=0.3, s=8, color="#2196F3", label="Fit")
+ax_s.scatter(np.abs(y_cal - y_cal_pred), sigma_pred_cal, alpha=0.3, s=8,
+             color="#FF9800", label="Cal")
+lim = max(residuals_fit.max(), sigma_pred_fit.max()) * 1.05
+ax_s.plot([0, lim], [0, lim], "k--", lw=1)
+ax_s.set_xlabel("|y - y_hat|  (true residual)")
+ax_s.set_ylabel("sigma_hat(x)  (predicted)")
+ax_s.set_title(f"Sigma model: predicted vs actual residual\n(R2_cal={diag_s_cal['r2']:.3f})")
 ax_s.legend(fontsize=8)
 ax_s.grid(True, alpha=0.3)
 plt.tight_layout()
 fig_s.savefig(out_dir / "sigma_scatter.png", dpi=150, bbox_inches="tight")
-plt.show()
-plt.close(fig_s)
+plt.show(); plt.close(fig_s)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §5  Nonconformity scores and the calibration quantile
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §5  Nonconformity scores and the calibration quantile"))
-display(Markdown(f"""
-For each calibration molecule i, the nonconformity score is:
+# ==============================================================================
+# S5  Formal definitions: calibration scores and q_hat
+# ==============================================================================
+display(Markdown("## S5  Calibration scores and q_hat"))
 
-  - ADAPTIVE  : s_i = |y_i - ŷ_i| / σ̂(x_i)   (normalized by local uncertainty)
-  - PLAIN     : s_i = |y_i - ŷ_i|              (raw residual)
-
-The (1-α) quantile of {{s_1, ..., s_n}} is computed.  During prediction,
-the interval for a new molecule x is:
-
-  - ADAPTIVE  : ŷ ± q̂ · σ̂(x)                 (molecule-specific width)
-  - PLAIN     : ŷ ± q̂                          (fixed width for all molecules)
-
-Here α = {alpha}, so we target {(1-alpha):.0%} coverage.
-"""))
-
-# Compute adaptive nonconformity scores on calibration set
 eps = 1e-6
-sigma_cal_safe = np.maximum(sigma_cal_pred, eps)
+sigma_cal_safe = np.maximum(sigma_pred_cal, eps)
 scores_adaptive = np.abs(y_cal - y_cal_pred) / sigma_cal_safe
-scores_plain = np.abs(y_cal - y_cal_pred)
+scores_plain    = np.abs(y_cal - y_cal_pred)
 
-n_cal = len(scores_adaptive)
+n_cal  = len(scores_adaptive)
 q_level = np.ceil((n_cal + 1) * (1 - alpha)) / n_cal
 q_level = min(q_level, 1.0)
-
 q_adaptive = np.quantile(scores_adaptive, q_level)
-q_plain = np.quantile(scores_plain,    q_level)
+q_plain    = np.quantile(scores_plain,    q_level)
 
-display(Markdown(f"- Calibration set size (n) : {n_cal}"))
-display(Markdown(f"- Quantile level used      : {q_level:.4f}  [= ceil((n+1)(1-α)) / n]"))
-display(Markdown(f"- Adaptive quantile q̂     : {q_adaptive:.4f}  (dimensionless, in σ units)"))
-display(Markdown(f"- Plain quantile q̂        : {q_plain:.4f}  (in target units)"))
+display(Markdown(f"- Calibration set size n : {n_cal}"))
+display(Markdown(f"- Quantile level         : {q_level:.4f}  [= ceil((n+1)*(1-alpha)) / n]"))
+display(Markdown(f"- q_hat adaptive         : {q_adaptive:.4f}  (in sigma units)"))
+display(Markdown(f"- q_hat plain            : {q_plain:.4f}  (in target units)"))
 
-# Plot nonconformity score distribution
 fig_q, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-ax1.hist(scores_adaptive,  bins="auto", density=True, alpha=0.7, color="#2196F3", label="Cal scores")
+ax1.hist(scores_adaptive, bins=40, density=True, alpha=0.7, color="#2196F3")
 ax1.axvline(q_adaptive, color="red", lw=2, linestyle="--",
-            label=f"q̂={q_adaptive:.3f}  ({(1-alpha):.0%} level)")
-ax1.set_xlabel("Nonconformity score  |y - ŷ| / σ̂(x)")
+            label=f"q_hat={q_adaptive:.3f}  ({1-alpha:.0%})")
+ax1.set_xlabel("|y - y_hat| / sigma_hat  (adaptive score)")
 ax1.set_ylabel("Density")
-ax1.set_title("Adaptive: normalised scores")
-ax1.legend(fontsize=8)
-ax1.grid(True, alpha=0.3)
-ax2.hist(scores_plain,  bins="auto", density=True, alpha=0.7, color="#FF9800", label="Cal scores")
+ax1.set_title("Adaptive nonconformity scores")
+ax1.legend(fontsize=8); ax1.grid(True, alpha=0.3)
+
+ax2.hist(scores_plain, bins=40, density=True, alpha=0.7, color="#FF9800")
 ax2.axvline(q_plain, color="red", lw=2, linestyle="--",
-            label=f"q̂={q_plain:.3f}  ({(1-alpha):.0%} level)")
-ax2.set_xlabel("Nonconformity score  |y - ŷ|")
+            label=f"q_hat={q_plain:.3f}  ({1-alpha:.0%})")
+ax2.set_xlabel("|y - y_hat|  (plain score)")
 ax2.set_ylabel("Density")
-ax2.set_title("Plain: raw residual scores")
-ax2.legend(fontsize=8)
-ax2.grid(True, alpha=0.3)
-plt.suptitle(f"Calibration nonconformity score distributions  (α={alpha})", fontsize=11)
+ax2.set_title("Plain nonconformity scores")
+ax2.legend(fontsize=8); ax2.grid(True, alpha=0.3)
+
+plt.suptitle(f"Calibration nonconformity score distributions  (alpha={alpha})", fontsize=11)
 plt.tight_layout()
 fig_q.savefig(out_dir / "calibration_scores.png", dpi=150, bbox_inches="tight")
-plt.show()
-plt.close(fig_q)
+plt.show(); plt.close(fig_q)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §5b  Formal definitions
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §5b  Formal definitions"))
-display(Markdown(r"""
-### Formal definitions (per-prediction vs per-model)
-
-**alpha** -- miscoverage level. *Scalar, set by the user before calibration.*
-The allowed fraction of test predictions that may fall outside the interval.
-alpha=0.1 means 10% are allowed to miss, so 90% coverage is targeted.
-
-**Nonconformity score** s(x_i, y_i) -- *per-prediction*, computed for each
-calibration molecule i.
-Measures how surprising the true label y_i is given prediction y-hat_i:
-  Plain:    s = |y - y-hat|
-  Adaptive: s = |y - y-hat| / sigma-hat(x)
-where sigma-hat(x) is the sigma model prediction (expected local residual).
-
-**Calibration quantile** q-hat -- *per-model*, computed once.
-q-hat = quantile({s_1, ..., s_n}, level = ceil((n+1)*(1-alpha)) / n)
-The inflated level (n+1)/n is a finite-sample correction ensuring marginal
-coverage >= 1-alpha (Vovk et al. 2005). This single number applies to all
-test molecules.
-
-**Prediction interval** C(x) -- *per-prediction*, at inference time.
-  Plain:    y-hat +/- q-hat          (same width for every molecule)
-  Adaptive: y-hat +/- q-hat*sigma(x) (width varies molecule by molecule)
-
-**Coverage** -- measured at two granularities:
-  Per-prediction: cov_i = 1[y_i in C(x_i)]. Binary for each molecule.
-  Per-model (marginal): Cov = mean(cov_i) over the test set.
-  CP guarantees Cov >= 1-alpha in expectation. This is the validity criterion.
-
-**Efficiency** -- measured at two granularities:
-  Per-prediction: w_i = upper_i - lower_i. Wide for uncertain molecules.
-  Per-model: W = mean(w_i). The primary efficiency metric; smaller is better.
-
-**Calibration objective** (the formal goal of conformal prediction):
-  Minimise W = mean interval width
-  subject to: Cov >= 1-alpha
-CP achieves this by construction via the quantile mechanism. The adaptive
-variant achieves lower W than plain CP when sigma-hat(x) correctly ranks
-molecules by local uncertainty -- wider only where genuinely needed.
-
-**Conditional vs marginal coverage**:
-CP guarantees *marginal* coverage (averaged over all test molecules).
-It does NOT guarantee that every subgroup (e.g. all out-of-AD compounds)
-achieves >= 1-alpha coverage. This is *conditional* coverage and requires
-additional assumptions. The adaptive variant approximates conditional
-coverage but the formal guarantee remains marginal.
-"""))
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# §6  MAPIE conformal predictors
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §6  Fitting MAPIE conformal predictors"))
+# ==============================================================================
+# S6  Mode 1: train_conformal_regression() with internal base model
+#     Uses the SAME production function as the VEGA pipeline
+# ==============================================================================
+display(Markdown("## S6  Mode 1: training with internal base model"))
 display(Markdown("""
-MAPIE (Model Agnostic Prediction Interval Estimator) implements the
-conformal procedure.  We use SplitConformalRegressor with prefit=False,
-meaning MAPIE trains the base model on X_fit and conformises on X_cal.
+We use train_conformal_regression() from tasks.mapie_regression -- the same
+function used in the main pipeline.  The function receives:
+  - df_train with a 'residuals' column (pre-computed from the fit set)
+  - df_calibration with Smiles, Exp, Pred, residuals columns
+  - ExternalPredictor wrapping y_cal_pred (the base model's calibration predictions)
+
+This is how VEGA models are handled: the model predictions are read from a
+file and passed to MAPIE as an ExternalPredictor.
 """))
 
-# ── Adaptive
-base_adaptive = LGBMRegressor(objective="huber", random_state=42, verbose=-1)
-conformity_adaptive = ResidualNormalisedScore(
-    residual_estimator=sigma_model, prefit=True, sym=True)
-mapie_adaptive = SplitConformalRegressor(
-    estimator=base_adaptive,
-    conformity_score=conformity_adaptive,
-    prefit=False,
-    confidence_level=1 - alpha)
-mapie_adaptive.fit(X_fit, y_fit)
-mapie_adaptive.conformalize(X_conformalize=X_cal, y_conformalize=y_cal)
+# Prepare DataFrames in the format expected by train_conformal_regression
+df_train_for_cp = fit_df[["Smiles", target_col]].copy()
+df_train_for_cp = df_train_for_cp.rename(columns={target_col: "Exp"})
+df_train_for_cp["residuals"] = residuals_fit
 
-# ── Plain
-base_plain = LGBMRegressor(objective="huber", random_state=42, verbose=-1)
-mapie_plain = SplitConformalRegressor(
-    estimator=base_plain,
-    conformity_score=AbsoluteConformityScore(),
-    prefit=False,
-    confidence_level=1 - alpha)
-mapie_plain.fit(X_fit, y_fit)
-mapie_plain.conformalize(X_conformalize=X_cal, y_conformalize=y_cal)
+df_cal_for_cp = cal_df[["Smiles", target_col]].copy()
+df_cal_for_cp = df_cal_for_cp.rename(columns={target_col: "Exp"})
+df_cal_for_cp["Pred"] = y_cal_pred
+df_cal_for_cp["residuals"] = np.abs(y_cal - y_cal_pred)
 
-display(Markdown("- Both conformal predictors fitted and conformalized."))
+model_path_mode1 = str(out_dir / "cp_model_mode1.pkl")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §7  Test set predictions and coverage
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §7  Test set predictions: coverage and efficiency"))
+train_conformal_regression(
+    df_train=df_train_for_cp,
+    experimental_tag="Exp",
+    df_calibration=df_cal_for_cp,
+    sheet_name=f"{dataset}_mode1",
+    experimental_tag_test="Exp",
+    predicted_tag_test="Pred",
+    cache_path=cache_path,
+    alpha=alpha,
+    output_model_path=model_path_mode1,
+    ncm=ncm,
+)
+display(Markdown(f"- Model saved to: {model_path_mode1}"))
+
+# Predict on test set using predict_conformal()
+df_test_for_cp = test_df[["Smiles", target_col]].copy()
+df_test_for_cp = df_test_for_cp.rename(columns={target_col: "Exp"})
+df_test_for_cp["Pred"] = y_test_pred_internal
+
+results_mode1, metrics_mode1, _ = predict_conformal(
+    df=df_test_for_cp,
+    pred_column="Pred",
+    true_column="Exp",
+    model_path=model_path_mode1,
+    tag=f"{dataset}",
+    smiles_column="Smiles",
+    split="Test",
+    save_path=str(out_dir / "mode1_residuals.png"),
+)
+
+display(Markdown("**Mode 1 results (internal base model):**"))
+display(pd.DataFrame([metrics_mode1]))
+
+# ==============================================================================
+# S7  Mode 2: external predictions from file (paper / VEGA pattern)
+# ==============================================================================
+display(Markdown("## S7  Mode 2: external predictions from file"))
 display(Markdown(f"""
-- Coverage (validity) : fraction of test molecules whose true value falls
-                      inside the predicted interval. CP guarantees ≥ {1-alpha:.0%}.
+In the paper, VEGA model predictions are read from a report file.
+The conformal wrapper does NOT retrain the base model -- it treats it as
+a black box and only needs the predictions.
 
-- Efficiency          : how narrow the intervals are. Measured as mean interval
-                      width (smaller = more informative). The ideal method
-                      achieves target coverage with the smallest possible width.
+If external_pred_file is set, we load predictions from that file.
+Otherwise we simulate an external predictor by using the same base model
+predictions (demonstrating the code path, not a different model).
+
+External file format: Smiles, {external_pred_col}, [{external_true_col}]
 """))
 
-y_pred_a, y_pis_a = mapie_adaptive.predict_interval(X_test)
-lower_a = y_pis_a[:, 0, 0]
-upper_a = y_pis_a[:, 1, 0]
-width_a = upper_a - lower_a
-covered_a = (y_test >= lower_a) & (y_test <= upper_a)
+if external_pred_file is not None and Path(external_pred_file).exists():
+    display(Markdown(f"- Loading external predictions from: {external_pred_file}"))
+    _p = Path(external_pred_file)
+    df_ext = pd.read_excel(_p) if _p.suffix in {".xlsx", ".xls"} else pd.read_csv(_p)
+    df_ext = df_ext.rename(columns={external_pred_col: "Pred"})
+    if external_true_col in df_ext.columns:
+        df_ext = df_ext.rename(columns={external_true_col: "Exp"})
+    # Use molecules in common with test set
+    df_test_ext = df_test_for_cp.merge(df_ext[["Smiles", "Pred"]], on="Smiles", how="inner",
+                                        suffixes=("_internal", ""))
+    if "Pred_internal" in df_test_ext.columns:
+        df_test_ext = df_test_ext.drop(columns=["Pred_internal"])
+    display(Markdown(f"- Matched {len(df_test_ext)} molecules with external predictions"))
+else:
+    display(Markdown("- No external_pred_file provided. Using internal model predictions to "
+                     "demonstrate the code path (same predictions as Mode 1)."))
+    df_test_ext = df_test_for_cp.copy()
 
-y_pred_p, y_pis_p = mapie_plain.predict_interval(X_test)
-lower_p = y_pis_p[:, 0, 0]
-upper_p = y_pis_p[:, 1, 0]
-width_p = upper_p - lower_p
-covered_p = (y_test >= lower_p) & (y_test <= upper_p)
+# The calibration set always uses the same sigma model and calibration data.
+# Only the test-time predictor changes.
+results_mode2, metrics_mode2, _ = predict_conformal(
+    df=df_test_ext,
+    pred_column="Pred",
+    true_column="Exp",
+    model_path=model_path_mode1,   # same sigma model, different predictions
+    tag=f"{dataset}_ext",
+    smiles_column="Smiles",
+    split="Test",
+    save_path=str(out_dir / "mode2_residuals.png"),
+)
 
-display(Markdown(f"-  {'Variant':<22}  {'Coverage':>10}  {'Mean width':>12}  {'Median width':>13}"))
-display(Markdown(f"-  {'Adaptive (sigma)':22}  {covered_a.mean():>10.3f}  {width_a.mean():>12.4f}  {np.median(width_a):>13.4f}"))
-display(Markdown(f"-  {'Plain (fixed)':22}  {covered_p.mean():>10.3f}  {width_p.mean():>12.4f}  {np.median(width_p):>13.4f}"))
-display(Markdown(f"-  Target coverage : {1-alpha:.3f}  (α = {alpha})"))
+display(Markdown("**Mode 2 results (external predictions):**"))
+display(pd.DataFrame([metrics_mode2]))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §8  Exchangeability check (KS test)
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §8  Exchangeability check (Kolmogorov-Smirnov test)"))
-display(Markdown("""
-CP coverage guarantees require that calibration and test scores are exchangeable
-(informally: look like independent samples from the same distribution).
-
-We check this by computing nonconformity scores on the test set and comparing
-their distribution to the calibration scores using the KS test.
-
-  - KS p-value >> 0.05 → no evidence of distributional shift → guarantee holds
-  - KS p-value << 0.05 → possible shift → coverage may deviate from guarantee
+# ==============================================================================
+# S8  Coverage and efficiency: formal comparison
+# ==============================================================================
+display(Markdown("## S8  Coverage and efficiency: formal comparison"))
+display(Markdown(f"""
+Objective: minimise W = mean interval width, subject to Cov >= {1-alpha:.2f}.
+Both modes achieve the coverage constraint by construction.
 """))
 
-sigma_test_safe = np.maximum(sigma_test_pred, eps)
-scores_test_adaptive = np.abs(y_test - y_pred_a) / sigma_test_safe
-scores_test_plain = np.abs(y_test - y_pred_p)
+summary_rows = []
+for name, metrics in [("Mode 1 internal", metrics_mode1), ("Mode 2 external", metrics_mode2)]:
+    summary_rows.append({
+        "Mode": name,
+        "Coverage": f"{metrics.get('Empirical coverage', metrics.get('Empirical Coverage', 'N/A')):.3f}",
+        "Target": f">= {1-alpha:.2f}",
+        "Mean width": f"{metrics['Average Interval Width']:.4f}",
+        "KS p-value": f"{metrics.get('exch_ks_pvalue', float('nan')):.4f}",
+    })
+display(pd.DataFrame(summary_rows))
 
-ks_a_stat, ks_a_p = ks_2samp(scores_adaptive, scores_test_adaptive)
-ks_p_stat, ks_p_p = ks_2samp(scores_plain,    scores_test_plain)
+# ==============================================================================
+# S9  Visualise prediction intervals
+# ==============================================================================
+display(Markdown("## S9  Prediction intervals on test set"))
 
-display(Markdown(f"- Adaptive  KS stat={ks_a_stat:.4f}  p={ks_a_p:.4f}  →  "
-      f"{'OK exchangeable' if ks_a_p > 0.05 else 'WARNING possible shift'}"))
-display(Markdown(f"- Plain     KS stat={ks_p_stat:.4f}  p={ks_p_p:.4f}  →  "
-      f"{'OK exchangeable' if ks_p_p > 0.05 else 'WARNING possible shift'}"))
+n_show = min(100, len(results_mode1))
+idx_sorted = np.argsort(results_mode1[f"{dataset}_true"].values)[:n_show]
 
-# KS distribution overlay
-fig_ks, (ax_ka, ax_kp) = plt.subplots(1, 2, figsize=(10, 4))
-for ax, sc_cal, sc_test, ks_p_val, title in [
-    (ax_ka, scores_adaptive, scores_test_adaptive, ks_a_p, "Adaptive"),
-    (ax_kp, scores_plain,    scores_test_plain,    ks_p_p, "Plain"),
-]:
-    ax.hist(sc_cal,   bins="auto", density=True, alpha=0.5, label="Calibration", color="#2196F3")
-    ax.hist(sc_test,  bins="auto", density=True, alpha=0.5, label="Test",        color="#FF9800")
-    ax.set_xlabel("Nonconformity score")
-    ax.set_ylabel("Density")
-    ax.set_title(f"{title}: Cal vs Test score distributions\n(KS p={ks_p_val:.4f})")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
-plt.suptitle("Exchangeability check: calibration vs test nonconformity scores", fontsize=11)
-plt.tight_layout()
-fig_ks.savefig(out_dir / "exchangeability_ks.png", dpi=150, bbox_inches="tight")
-plt.show()
-plt.close(fig_ks)
+y_true_show  = results_mode1[f"{dataset}_true"].values[idx_sorted]
+y_pred_show  = results_mode1[f"{dataset}_pred"].values[idx_sorted]
+lower_show   = results_mode1[f"{dataset}_lower"].values[idx_sorted]
+upper_show   = results_mode1[f"{dataset}_upper"].values[idx_sorted]
+covered_show = (y_true_show >= lower_show) & (y_true_show <= upper_show)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §9  Visualise prediction intervals on test set
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §9  Visualising prediction intervals"))
-
-n_show = min(100, len(test_df))
-idx_sorted = np.argsort(y_test)[:n_show]
-
-fig_pi, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-for ax, lower, upper, pred, covered, title in [
-    (axes[0], lower_a[idx_sorted], upper_a[idx_sorted],
-     y_pred_a[idx_sorted], covered_a[idx_sorted], "Adaptive (molecule-specific width)"),
-    (axes[1], lower_p[idx_sorted], upper_p[idx_sorted],
-     y_pred_p[idx_sorted], covered_p[idx_sorted], "Plain (fixed width)"),
-]:
-    x_pos = np.arange(n_show)
-    ax.fill_between(x_pos, lower, upper, alpha=0.25, color="#2196F3",
-                    label="Prediction interval")
-    ax.scatter(x_pos[covered],  y_test[idx_sorted][covered],
-               c="green", s=15, zorder=3, label="Covered")
-    ax.scatter(x_pos[~covered], y_test[idx_sorted][~covered],
-               c="red",   s=25, zorder=4, marker="x", label="Not covered")
-    ax.plot(x_pos, pred, color="#FF9800", lw=1, alpha=0.7, label="ŷ")
-    ax.set_ylabel(target_col)
-    ax.set_title(f"{title}   coverage={covered.mean():.3f}  "
-                 f"mean width={np.mean(upper-lower):.3f}")
-    ax.legend(fontsize=7, loc="upper left")
-    ax.grid(True, alpha=0.3)
-axes[1].set_xlabel(f"Test molecules (sorted by true {target_col})")
-plt.suptitle(f"Prediction intervals on test set  (α={alpha}, n={n_show})", fontsize=11)
+fig_pi, ax_pi = plt.subplots(figsize=(12, 4))
+x_pos = np.arange(n_show)
+ax_pi.fill_between(x_pos, lower_show, upper_show, alpha=0.25,
+                   color="#2196F3", label="Prediction interval")
+ax_pi.scatter(x_pos[covered_show],  y_true_show[covered_show],
+              c="green", s=15, zorder=3, label="Covered")
+ax_pi.scatter(x_pos[~covered_show], y_true_show[~covered_show],
+              c="red", s=25, zorder=4, marker="x", label="Not covered")
+ax_pi.plot(x_pos, y_pred_show, color="#FF9800", lw=1, alpha=0.7, label="y_hat")
+ax_pi.set_xlabel(f"Test molecules (sorted by true {target_col})")
+ax_pi.set_ylabel(target_col)
+ax_pi.set_title(f"Prediction intervals  (alpha={alpha}, n={n_show})\n"
+                f"coverage={covered_show.mean():.3f}  "
+                f"mean width={np.mean(upper_show - lower_show):.3f}")
+ax_pi.legend(fontsize=7, loc="upper left")
+ax_pi.grid(True, alpha=0.3)
 plt.tight_layout()
 fig_pi.savefig(out_dir / "prediction_intervals.png", dpi=150, bbox_inches="tight")
-plt.show()
-plt.close(fig_pi)
+plt.show(); plt.close(fig_pi)
 
-# Interval width vs sigma
-fig_sw, ax_sw = plt.subplots(figsize=(5, 4))
-ax_sw.scatter(sigma_test_pred[idx_sorted], width_a[idx_sorted],
-              alpha=0.4, s=10, color="#2196F3")
-ax_sw.set_xlabel("σ̂(x)  (sigma model prediction)")
-ax_sw.set_ylabel("Adaptive interval width")
-ax_sw.set_title("Interval width is proportional to σ̂(x)")
-ax_sw.grid(True, alpha=0.3)
-plt.tight_layout()
-fig_sw.savefig(out_dir / "width_vs_sigma.png", dpi=150, bbox_inches="tight")
-plt.show()
-plt.close(fig_sw)
+# ==============================================================================
+# S10  Exchangeability (KS test)
+# ==============================================================================
+display(Markdown("## S10  Exchangeability check (KS test)"))
+display(Markdown("""
+CP coverage guarantees require that calibration and test nonconformity scores
+are exchangeable (look like draws from the same distribution).
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §9b  Efficiency analysis: adaptive vs plain
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §9b  Efficiency analysis: adaptive vs plain CP"))
-display(Markdown(f"""
-Both variants achieve the coverage target (>= {1-alpha:.0%}) by construction.
-Efficiency distinguishes them: which achieves that coverage with narrower intervals?
+KS p-value >> 0.05 -> no evidence of shift -> guarantee holds
+KS p-value << 0.05 -> possible shift -> coverage may deviate from guarantee
 
-For plain CP every molecule gets the same width: 2 * q_plain.
-For adaptive CP width = 2 * q_adaptive * sigma(x): larger where uncertainty is
-high, smaller where it is low.
-
-Objective: Minimise W = mean interval width, subject to Cov >= {1-alpha:.2f}.
-We verify both constraints from the test set results below.
+We compare the calibration score distribution against the test scores.
 """))
 
-eff_rows = []
-for variant, lower_, upper_, covered_, w_ in [
-    ("adaptive", lower_a, upper_a, covered_a, width_a),
-    ("plain",    lower_p, upper_p, covered_p, width_p),
-]:
-    eff_rows.append({
-        "Variant":      variant,
-        "Coverage":     f"{covered_.mean():.3f}",
-        "Target":       f">= {1-alpha:.2f}",
-        "Mean width":   f"{w_.mean():.4f}",
-        "Median width": f"{np.median(w_):.4f}",
-        "Std width":    f"{w_.std():.4f}",
-        "Min width":    f"{w_.min():.4f}",
-        "Max width":    f"{w_.max():.4f}",
-    })
-display(pd.DataFrame(eff_rows))
+scores_test_adaptive = results_mode1[f"{dataset}_ncm"].dropna().values
+ks_stat, ks_p = ks_2samp(scores_adaptive, scores_test_adaptive)
 
-fig_eff, (ax_e1, ax_e2) = plt.subplots(1, 2, figsize=(11, 4))
-ax_e1.hist(width_a,  bins="auto", alpha=0.6, density=True,
-           color="#2196F3", label=f"Adaptive  mean={width_a.mean():.3f}")
-bins = "auto"
-try:
-  ax_e1.hist(width_p,  bins=bins, alpha=0.6, density=True,
-           color="#FF9800", label=f"Plain     mean={width_p.mean():.3f}")
-except Exception as err:
-    print(err)  
-ax_e1.axvline(width_a.mean(), color="#2196F3", lw=2, linestyle="--")
-ax_e1.axvline(width_p.mean(), color="#FF9800", lw=2, linestyle="--")
-ax_e1.set_xlabel("Interval width")
-ax_e1.set_ylabel("Density")
-ax_e1.set_title("Width distribution: adaptive vs plain")
-ax_e1.legend(fontsize=8)
-ax_e1.grid(True, alpha=0.3)
-ax_e2.scatter(width_p - width_a, y_test, c=covered_a.astype(int),
-              cmap="RdYlGn", alpha=0.5, s=12)
-ax_e2.axvline(0, color="black", lw=1, linestyle="--")
-ax_e2.set_xlabel("Width reduction (plain minus adaptive)")
-ax_e2.set_ylabel(target_col)
-ax_e2.set_title("Width reduction per molecule\n(positive = adaptive is narrower)")
-ax_e2.grid(True, alpha=0.3)
-pct_narrower = np.mean(width_a < width_p) * 100
-display(Markdown(f"Adaptive is narrower than plain for **{pct_narrower:.1f}%** of test molecules."))
+fig_ks, ax_ks = plt.subplots(figsize=(6, 4))
+ax_ks.hist(scores_adaptive,      bins=40, density=True, alpha=0.5,
+           label="Calibration", color="#2196F3")
+ax_ks.hist(scores_test_adaptive, bins=40, density=True, alpha=0.5,
+           label="Test", color="#FF9800")
+ax_ks.set_xlabel("Nonconformity score  |y - y_hat| / sigma_hat")
+ax_ks.set_ylabel("Density")
+ax_ks.set_title(f"Exchangeability: cal vs test scores\n(KS p={ks_p:.4f})")
+ax_ks.legend(fontsize=8)
+ax_ks.grid(True, alpha=0.3)
 plt.tight_layout()
-fig_eff.savefig(out_dir / "efficiency_analysis.png", dpi=150, bbox_inches="tight")
-plt.show()
-plt.close(fig_eff)
+fig_ks.savefig(out_dir / "exchangeability_ks.png", dpi=150, bbox_inches="tight")
+plt.show(); plt.close(fig_ks)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §9c  Sigma model comparison: does NCM choice matter?
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §9c  Sigma model comparison: which NCM to use?"))
+display(Markdown(f"- KS statistic: {ks_stat:.4f}"))
+display(Markdown(f"- KS p-value  : {ks_p:.4f}  "
+                 f"({'OK exchangeable' if ks_p > 0.05 else 'WARNING possible shift'})"))
+
+# ==============================================================================
+# S11  Coverage guarantee sweep across alpha
+# ==============================================================================
+display(Markdown("## S11  Coverage guarantee across alpha levels"))
+display(Markdown("""
+Split CP guarantees coverage >= 1-alpha for ANY alpha.
+We verify by sweeping alpha and recomputing from already-fitted calibration scores.
+"""))
+
+# Load saved conformity scores from the model
+with open(model_path_mode1, "rb") as f:
+    saved_m1 = pickle.load(f)
+mapie_m1 = saved_m1["mapie"]
+cal_scores_mapie = mapie_m1._mapie_regressor.conformity_scores_
+cal_scores_mapie = cal_scores_mapie[~np.isnan(cal_scores_mapie)]
+
+alphas_sw = np.arange(0.05, 0.51, 0.05)
+coverages_sw = []
+widths_sw    = []
+
+sigma_test_safe = np.maximum(sigma_pred_test, eps)
+y_pred_test_arr = results_mode1[f"{dataset}_pred"].values
+
+for a in alphas_sw:
+    _n = len(cal_scores_mapie)
+    _ql = min(np.ceil((_n + 1) * (1 - a)) / _n, 1.0)
+    _q  = np.quantile(cal_scores_mapie, _ql)
+    _lo = y_pred_test_arr - _q * sigma_test_safe
+    _hi = y_pred_test_arr + _q * sigma_test_safe
+    coverages_sw.append(np.mean((y_test >= _lo) & (y_test <= _hi)))
+    widths_sw.append(np.mean(_hi - _lo))
+
+fig_sw, (ax_sw1, ax_sw2) = plt.subplots(1, 2, figsize=(10, 4))
+ax_sw1.plot(1 - alphas_sw, coverages_sw, "o-", color="#2196F3")
+ax_sw1.plot([0.5, 0.95], [0.5, 0.95], "k:", lw=1, label="y = 1-alpha (ideal)")
+ax_sw1.set_xlabel("Target coverage  (1 - alpha)")
+ax_sw1.set_ylabel("Empirical coverage")
+ax_sw1.set_title("Coverage guarantee across alpha levels")
+ax_sw1.legend(fontsize=8); ax_sw1.grid(True, alpha=0.3)
+ax_sw2.plot(1 - alphas_sw, widths_sw, "s-", color="#FF9800")
+ax_sw2.set_xlabel("Target coverage  (1 - alpha)")
+ax_sw2.set_ylabel("Mean interval width")
+ax_sw2.set_title("Efficiency-coverage trade-off")
+ax_sw2.grid(True, alpha=0.3)
+plt.suptitle("Marginal coverage and efficiency across alpha values", fontsize=11)
+plt.tight_layout()
+fig_sw.savefig(out_dir / "coverage_alpha_sweep.png", dpi=150, bbox_inches="tight")
+plt.show(); plt.close(fig_sw)
+
+# ==============================================================================
+# S12  NCM quality vs coverage/efficiency
+# ==============================================================================
+display(Markdown("## S12  NCM model quality vs coverage and efficiency"))
 display(Markdown(r"""
-'which machine learning method should be used for the sigma model?'
+Reviewers ask: 'which ML method should be used for the sigma model?'
 
 Key insight from CP theory:
 - **Coverage is guaranteed regardless of sigma model quality.**
-  The calibration quantile q-hat absorbs whatever the sigma model does.
-  Coverage is always >= 1-alpha.
+  The calibration quantile q_hat absorbs whatever the sigma model does.
 - **Efficiency depends on sigma model quality.**
-  A better sigma model correctly ranks molecules by local uncertainty,
-  so normalised scores are more uniform, q-hat (normalised) is smaller,
-  and intervals are narrower where sigma is small.
-  A constant sigma model (sigma=k for all x) reduces adaptive CP to plain CP.
+  A better sigma model correctly ranks molecules by local uncertainty
+  => smaller q_hat in normalised units => narrower intervals.
 
-Below we simulate three quality levels using the same real calibration residuals
-(so coverage is identical) and compare q-hat, mean width, and coverage.
-- Row 1: sigma model scatter (R2 varies). 
-- Row 2: normalised score distributions.
+Below we simulate three sigma quality levels from the same real calibration
+residuals and show that coverage is stable while mean width varies.
 """))
 
 np.random.seed(42)
-_true_res  = np.abs(y_cal - y_cal_pred)
-_true_res_test = np.abs(y_test - y_pred_a)
+_true_res_cal  = np.abs(y_cal - y_cal_pred)
+_true_res_test = np.abs(y_test - y_pred_test_arr)
 
-_ncm_configs = [
+_configs = [
     ("Poor  (R2~0.1)",  2.0,  "#e74c3c"),
     ("Medium (R2~0.5)", 0.8,  "#3498db"),
     ("Good  (R2~0.9)",  0.25, "#27ae60"),
 ]
 
 fig_ncm, axes_ncm = plt.subplots(2, 3, figsize=(14, 8))
-ncm_results = []
-for col_idx, (label, noise_scale, color) in enumerate(_ncm_configs):
-    _sigma_cal  = np.maximum(_true_res + np.random.normal(
-        0, noise_scale * _true_res.mean(), len(_true_res)), 1e-4)
-    _sigma_test = np.maximum(_true_res_test + np.random.normal(
-        0, noise_scale * _true_res_test.mean(), len(_true_res_test)), 1e-4)
-
-    from sklearn.metrics import r2_score as _r2s
-    _r2v = _r2s(_true_res, _sigma_cal)
-    _scores = _true_res / _sigma_cal
+ncm_rows = []
+for col_idx, (label, noise, color) in enumerate(_configs):
+    _sc  = np.maximum(_true_res_cal  + np.random.normal(0, noise * _true_res_cal.mean(),
+                                                          len(_true_res_cal)), 1e-4)
+    _st  = np.maximum(_true_res_test + np.random.normal(0, noise * _true_res_test.mean(),
+                                                          len(_true_res_test)), 1e-4)
+    _r2  = r2_score(_true_res_cal, _sc)
+    _sc_safe = np.maximum(_sc, eps)
+    _scores  = _true_res_cal / _sc_safe
     _n = len(_scores)
     _ql = min(np.ceil((_n + 1) * (1 - alpha)) / _n, 1.0)
     _q  = np.quantile(_scores, _ql)
-    _lo = y_pred_a - _q * _sigma_test
-    _hi = y_pred_a + _q * _sigma_test
-    _w  = _hi - _lo
+    _lo = y_pred_test_arr - _q * np.maximum(_st, eps)
+    _hi = y_pred_test_arr + _q * np.maximum(_st, eps)
     _cov = np.mean((y_test >= _lo) & (y_test <= _hi))
-    ncm_results.append({"Model": label, "R2": round(_r2v, 3), "q_hat": round(_q, 3),
-                         "Coverage": round(_cov, 3), "Mean_width": round(_w.mean(), 3)})
+    _w   = np.mean(_hi - _lo)
+    ncm_rows.append({"Model": label, "R2": round(_r2, 3),
+                     "q_hat": round(_q, 3), "Coverage": round(_cov, 3),
+                     "Mean_width": round(_w, 3)})
 
     ax_top = axes_ncm[0, col_idx]
-    ax_top.scatter(_true_res, _sigma_cal, alpha=0.35, s=8, color=color)
-    _lim = max(_true_res.max(), _sigma_cal.max()) * 1.05
+    ax_top.scatter(_true_res_cal, _sc, alpha=0.35, s=8, color=color)
+    _lim = max(_true_res_cal.max(), _sc.max()) * 1.05
     ax_top.plot([0, _lim], [0, _lim], "k--", lw=1)
-    ax_top.set_xlabel("|y - y-hat|  (true residual)")
-    ax_top.set_ylabel("sigma(x)  (predicted)")
-    ax_top.set_title(f"{label}\nR2 = {_r2v:.2f}")
+    ax_top.set_xlabel("|y - y_hat|  (true residual)")
+    ax_top.set_ylabel("sigma_hat(x)  (predicted)")
+    ax_top.set_title(f"{label}\nR2 = {_r2:.2f}")
     ax_top.grid(True, alpha=0.3)
 
     ax_bot = axes_ncm[1, col_idx]
     ax_bot.hist(_scores, bins=35, density=True, alpha=0.65, color=color)
     ax_bot.axvline(_q, color="red", lw=2, linestyle="--",
-                   label=f"q-hat={_q:.2f}  cov={_cov:.3f}  W={_w.mean():.3f}")
-    ax_bot.set_xlabel("|y - y-hat| / sigma  (normalised score)")
+                   label=f"q_hat={_q:.2f}  cov={_cov:.3f}  W={_w:.3f}")
+    ax_bot.set_xlabel("|y - y_hat| / sigma  (normalised score)")
     ax_bot.set_ylabel("Density")
-    ax_bot.set_title(f"Coverage={_cov:.3f}  Mean width={_w.mean():.3f}")
+    ax_bot.set_title(f"Coverage={_cov:.3f}  Mean width={_w:.3f}")
     ax_bot.legend(fontsize=7)
     ax_bot.grid(True, alpha=0.3)
 plt.suptitle(
-    f"Sigma model quality vs CP outcome  (alpha={alpha}, target={1-alpha:.0%})\n"
-    "Coverage is stable across all quality levels; efficiency improves with better sigma model.",
+    f"NCM quality vs CP outcome  (alpha={alpha}, target={1-alpha:.0%})\n"
+    "Coverage stable; efficiency improves with better sigma model.",
     fontsize=10)
 plt.tight_layout()
 fig_ncm.savefig(out_dir / "ncm_comparison.png", dpi=150, bbox_inches="tight")
-plt.show()
-plt.close(fig_ncm)
+plt.show(); plt.close(fig_ncm)
 
-ncm_df = pd.DataFrame(ncm_results)
-display(ncm_df)
+display(pd.DataFrame(ncm_rows))
 display(Markdown("""
-**Summary:**
-- Coverage is robust to NCM choice: all three achieve the target (guaranteed by theory).
-- Efficiency varies: a better sigma model gives narrower mean intervals.
-- For QSAR with ECFP fingerprints, LightGBM Huber (rlgbmecfp) achieves the
-  best sigma R2 across tested datasets and is the recommended default --
-  but the coverage guarantee holds regardless of which model is chosen.
+**Take-away:**
+- Coverage is robust to NCM choice: all quality levels achieve the target.
+- LightGBM Huber (rlgbmecfp) achieves the best sigma R2 on QSAR datasets
+  and is the recommended default -- but the guarantee holds regardless.
 """))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# §10  Marginal coverage vs alpha sweep
-# ═══════════════════════════════════════════════════════════════════════════════
-display(Markdown("## §10  Marginal coverage guarantee: sweeping α"))
-display(Markdown("""
-A key property of split CP is that empirical coverage ≥ 1-α holds for ANY α,
-provided exchangeability holds.  We verify this by re-computing coverage across
-a range of α values using the already-fitted conformity scores.
-"""))
-
-alphas = np.arange(0.05, 0.51, 0.05)
-coverages_a = []
-coverages_p = []
-widths_a_mean = []
-widths_p_mean = []
-
-# Retrieve calibration conformity scores stored by MAPIE
-scores_mapie_a = mapie_adaptive._mapie_regressor.conformity_scores_
-scores_mapie_a = scores_mapie_a[~np.isnan(scores_mapie_a)]
-scores_mapie_p = mapie_plain._mapie_regressor.conformity_scores_
-scores_mapie_p = scores_mapie_p[~np.isnan(scores_mapie_p)]
-
-for a in alphas:
-    n = len(scores_mapie_a)
-    ql = min(np.ceil((n + 1) * (1 - a)) / n, 1.0)
-
-    qa = np.quantile(scores_mapie_a, ql)
-    qp = np.quantile(scores_mapie_p, ql)
-
-    lo_a = y_pred_a - qa * sigma_test_safe
-    hi_a = y_pred_a + qa * sigma_test_safe
-    coverages_a.append(np.mean((y_test >= lo_a) & (y_test <= hi_a)))
-    widths_a_mean.append(np.mean(hi_a - lo_a))
-
-    lo_p = y_pred_p - qp
-    hi_p = y_pred_p + qp
-    coverages_p.append(np.mean((y_test >= lo_p) & (y_test <= hi_p)))
-    widths_p_mean.append(np.mean(hi_p - lo_p))
-
-fig_alpha, (ax_cov, ax_wid) = plt.subplots(1, 2, figsize=(10, 4))
-ax_cov.plot(1 - alphas, coverages_a, "o-", label="Adaptive", color="#2196F3")
-ax_cov.plot(1 - alphas, coverages_p, "s--", label="Plain",    color="#FF9800")
-ax_cov.plot([1 - alphas.max(), 1 - alphas.min()],
-            [1 - alphas.max(), 1 - alphas.min()], "k:", lw=1, label="y = 1-α (ideal)")
-ax_cov.set_xlabel("Target coverage  (1 - α)")
-ax_cov.set_ylabel("Empirical coverage")
-ax_cov.set_title("Coverage guarantee across α levels")
-ax_cov.legend(fontsize=8)
-ax_cov.grid(True, alpha=0.3)
-ax_wid.plot(1 - alphas, widths_a_mean, "o-", label="Adaptive", color="#2196F3")
-ax_wid.plot(1 - alphas, widths_p_mean, "s--", label="Plain",    color="#FF9800")
-ax_wid.set_xlabel("Target coverage  (1 - α)")
-ax_wid.set_ylabel("Mean interval width")
-ax_wid.set_title("Interval width vs coverage level\n(efficiency trade-off)")
-ax_wid.legend(fontsize=8)
-ax_wid.grid(True, alpha=0.3)
-plt.suptitle("Marginal coverage and efficiency across α values", fontsize=11)
-plt.tight_layout()
-fig_alpha.savefig(out_dir / "coverage_alpha_sweep.png", dpi=150, bbox_inches="tight")
-plt.show()
-plt.close(fig_alpha)
-
-for a, ca, cp in zip(alphas, coverages_a, coverages_p):
-    display(Markdown(f"- α={a:.2f}  target={1-a:.2f}  "
-          f"adaptive={ca:.3f}  plain={cp:.3f}"))
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# §11  Save models and results
-# ═══════════════════════════════════════════════════════════════════════════════
-def _save(path, mapie_obj, sigma_obj, diag_s, variant):
-    d = {
-        "mapie": mapie_obj, "sigma_model": sigma_obj,
-        "ncm": ncm, "variant": variant, "alpha": alpha,
-        "sigma_r2": diag_s["r2"], "sigma_rmse": diag_s["rmse"],
-        "sigma_mae": diag_s["mae"], "meta": meta,
-    }
-    with open(path, "wb") as fh:
-        pickle.dump(d, fh)
-
-
-_save(product["ncmodel_adaptive"], mapie_adaptive, sigma_model, diag_sigma, "adaptive")
-_save(product["ncmodel_plain"],    mapie_plain,    sigma_model, diag_sigma, "plain")
-result_df = pd.DataFrame({
-    "Smiles": test_df["Smiles"].values,
-    "True": y_test,
-    "Pred_adaptive": y_pred_a,
-    "Lower_adaptive": lower_a, "Upper_adaptive": upper_a,
-    "Width_adaptive": width_a, "Covered_adaptive": covered_a.astype(int),
-    "Sigma_pred": sigma_test_pred,
-    "Pred_plain": y_pred_p,
-    "Lower_plain": lower_p, "Upper_plain": upper_p,
-    "Width_plain": width_p, "Covered_plain": covered_p.astype(int),
-})
-
-metrics = pd.DataFrame([
-    {"variant": "adaptive", "alpha": alpha,
-     "coverage": covered_a.mean(), "mean_width": width_a.mean(),
-     "median_width": np.median(width_a),
-     "sigma_r2": diag_sigma_cal["r2"], "n_test": len(test_df),
-     "ks_stat": ks_a_stat, "ks_pvalue": ks_a_p},
-    {"variant": "plain", "alpha": alpha,
-     "coverage": covered_p.mean(), "mean_width": width_p.mean(),
-     "median_width": np.median(width_p),
-     "sigma_r2": None, "n_test": len(test_df),
-     "ks_stat": ks_p_stat, "ks_pvalue": ks_p_p},
-])
-
+# ==============================================================================
+# S13  Save results
+# ==============================================================================
 with pd.ExcelWriter(product["data"], engine="xlsxwriter") as w:
-    result_df.to_excel(w, sheet_name="Predictions", index=False)
-    metrics.to_excel(w, sheet_name="Metrics", index=False)
+    results_mode1.to_excel(w, sheet_name="Mode1_internal", index=False)
+    results_mode2.to_excel(w, sheet_name="Mode2_external", index=False)
+    pd.DataFrame([metrics_mode1, metrics_mode2]).to_excel(w, sheet_name="Metrics", index=False)
+    pd.DataFrame(ncm_rows).to_excel(w, sheet_name="NCM_comparison", index=False)
 
-display(Markdown("## [OK] Tutorial complete."))
-display(Markdown(f"- Results → {product['data']}"))
-display(Markdown(f"- Plots   → {out_dir}"))
+display(Markdown("## [OK] Regression tutorial complete."))
+display(Markdown(f"- Results: {product['data']}"))
+display(Markdown(f"- Plots  : {out_dir}"))

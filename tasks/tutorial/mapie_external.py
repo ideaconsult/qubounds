@@ -1,3 +1,26 @@
+import json
+import pickle
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import Ridge
+from lightgbm import LGBMRegressor
+from mapie.regression import SplitConformalRegressor
+from mapie.conformity_scores import ResidualNormalisedScore, AbsoluteConformityScore
+from sklearn.model_selection import train_test_split
+
+from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+from qubounds.mapie_diagnostic import (
+    make_sigma_model, sigma_diagnostics, detect_residual_degeneracy,
+)
+# Re-use ExternalPredictor from the main regression module
+from qubounds.mapie_regression import ExternalPredictor
+from IPython.display import display, Markdown, HTML
+%matplotlib inline
+
 """
 tasks/tutorial/mapie_external.py
 ------------------------------
@@ -22,28 +45,6 @@ Inputs  (ploomber params)
                           The external model type to train and then treat as black-box.
   product       : dict – {nb, data, ncmodel_adaptive, ncmodel_plain}
 """
-import json
-import pickle
-import numpy as np
-import pandas as pd
-from pathlib import Path
-
-from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import Ridge
-from lightgbm import LGBMRegressor
-from mapie.regression import SplitConformalRegressor
-from mapie.conformity_scores import ResidualNormalisedScore, AbsoluteConformityScore
-from sklearn.model_selection import train_test_split
-
-from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
-from qubounds.mapie_diagnostic import (
-    make_sigma_model, sigma_diagnostics, detect_residual_degeneracy,
-)
-# Re-use ExternalPredictor from the main regression module
-from qubounds.mapie_regression import ExternalPredictor
-from IPython.display import display, Markdown, HTML
-%matplotlib inline
 
 
 # + tags=["parameters"]

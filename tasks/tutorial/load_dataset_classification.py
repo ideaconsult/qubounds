@@ -1,3 +1,10 @@
+import json
+import numpy as np
+import pandas as pd
+from pathlib import Path
+from sklearn.model_selection import train_test_split
+from IPython.display import display, Markdown, HTML
+
 """
 tasks/tutorial/load_dataset_classification.py
 ----------------------------------------------
@@ -31,14 +38,6 @@ test_size    = 0.2
 random_state = 42
 product      = None
 # -
-
-import json
-import numpy as np
-import pandas as pd
-from pathlib import Path
-from sklearn.model_selection import train_test_split
-from IPython.display import display, Markdown, HTML
-
 
 # ── built-in loaders ──────────────────────────────────────────────────────────
 
