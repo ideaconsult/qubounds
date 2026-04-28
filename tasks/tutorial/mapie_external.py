@@ -36,12 +36,12 @@ from mapie.regression import SplitConformalRegressor
 from mapie.conformity_scores import ResidualNormalisedScore, AbsoluteConformityScore
 from sklearn.model_selection import train_test_split
 
-from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
-from tasks.mapie_diagnostic import (
+from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+from qubounds.mapie_diagnostic import (
     make_sigma_model, sigma_diagnostics, detect_residual_degeneracy,
 )
 # Re-use ExternalPredictor from the main regression module
-from tasks.mapie_regression import ExternalPredictor
+from qubounds.mapie_regression import ExternalPredictor
 from IPython.display import display, Markdown, HTML
 %matplotlib inline
 

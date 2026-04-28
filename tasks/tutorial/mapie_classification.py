@@ -51,8 +51,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
 from sklearn.calibration import CalibratedClassifierCV
 
-from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
-from tasks.mapie_diagnostic import make_sigma_model, sigma_diagnostics
+from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+from qubounds.mapie_diagnostic import make_sigma_model, sigma_diagnostics
 %matplotlib inline
 
 # + tags=["parameters"]
