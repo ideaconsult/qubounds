@@ -952,27 +952,29 @@ def plot_classification_summary(aggregator: 'ConformalAggregator',
 
     # ------------------------------------------------------------------ #
     # Figure layout: 2 rows, 2 cols                                        #
-    #   Row 0, colspan 2  — Panel 1 (Certainty Gradient)
-    #   Row 1, col 0      — Panel 2 (Utility Ranking)
-    #   Row 1, col 1      — Panel 3 (Heatmap)
+    #   Row 0, col 0  — Panel 1a (Certainty Gradient stacked bar)
+    #   Row 0, col 1  — Panel 1b (Sample Distribution by ADI)
+    #   Row 1, col 0  — Panel 2  (Per-model stacked set-size bars)
+    #   Row 1, col 1  — Panel 3  (Reliability Heatmap)
     # ------------------------------------------------------------------ #
     fig = plt.figure(figsize=(18, 10 + max(0, (n_models - 20) * 0.18)))
     gs = fig.add_gridspec(
         2, 2,
         height_ratios=[1.0, max(1.8, n_models * 0.14)],
-        hspace=0.38, wspace=0.22
+        hspace=0.38, wspace=0.28
     )
 
-    # ================================================================== #
-    # PANEL 1 — Certainty Gradient                                         #
-    #   Mirrors distance_by_adi_bins_classification / Plot 2              #
-    # ================================================================== #
-    ax1 = fig.add_subplot(gs[0, :])
-
-    # Use Spectral_r colourmap (same as reference)
+    # Use Spectral_r colourmap (same as distance_by_adi_bins_classification)
     cmap_spectral = plt.cm.Spectral_r
     n_sizes = max_sz + 1
     size_colors = [cmap_spectral(i / max(n_sizes - 1, 1)) for i in range(n_sizes)]
+
+    # ================================================================== #
+    # PANEL 1a — Certainty Gradient (top-left)                            #
+    #   Stacked bar: set-size composition per ADI bin                     #
+    #   + singleton rate grey line overlay (right y-axis, hidden ticks)   #
+    # ================================================================== #
+    ax1 = fig.add_subplot(gs[0, 0])
 
     x_pos = np.arange(len(ADI_LABELS))
     bar_w = 0.6
@@ -980,85 +982,135 @@ def plot_classification_summary(aggregator: 'ConformalAggregator',
 
     for sz in range(0, max_sz + 1):
         vals = sz_matrix[sz].values.astype(float)
-        label = '0 (empty)' if sz == 0 else ('1 (singleton)' if sz == 1 else str(sz))
+        lbl_sz = '0 (empty)' if sz == 0 else ('1 (singleton)' if sz == 1 else str(sz))
         ax1.bar(x_pos, vals, bar_w, bottom=bottoms,
                 color=size_colors[sz], edgecolor='black', linewidth=0.4,
-                label=label, alpha=0.92)
+                label=lbl_sz, alpha=0.92)
         bottoms += vals
 
-    # Singleton rate overlay — grey line, right y-axis (hidden ticks)
-    # mirrors ax2r in distance_by_adi_bins_classification
+    # Singleton rate overlay — mirrors ax2r in distance_by_adi_bins_classification
     ax1r = ax1.twinx()
     ax1r.plot(x_pos, sing_vals_global,
               color='gray', marker='o', linewidth=2.5,
               markersize=8, linestyle='-', label='Singleton rate', zorder=5)
     ax1r.set_ylim(0, 120)
     ax1r.set_yticks([])
-    # Annotate each singleton point with value + N
     for xi, lbl in enumerate(ADI_LABELS):
         v = singleton_pct_global[lbl]
         n = total_by_bin[lbl]
         ax1r.text(xi, v + 4, f'{v:.0f}%\nN={n:,}',
-                  ha='center', fontsize=8.5, fontweight='bold', color='black')
+                  ha='center', fontsize=8, fontweight='bold', color='black')
     ax1r.legend(loc='upper left', fontsize=8)
 
     ax1.set_xticks(x_pos)
-    ax1.set_xticklabels(ADI_LABELS, fontsize=10)
+    ax1.set_xticklabels(ADI_LABELS, fontsize=9)
     ax1.set_ylabel('Percentage of Predictions (%)', fontsize=11, fontweight='bold')
     ax1.set_ylim(0, 105)
-    interp = '✓ Good' if rho_global > 0.3 else ('○ Weak' if rho_global > 0 else '⚠ Unexpected')
+    interp = '\u2713 Good' if rho_global > 0.3 else ('\u25cb Weak' if rho_global > 0 else '\u26a0 Unexpected')
     ax1.set_title(
-        f'Certainty Gradient: Label Set-Size Composition by Applicability Domain  '
-        f'(Spearman \u03c1 ADI vs singleton = {rho_global:.2f}, {interp})',
-        fontsize=12, fontweight='bold'
+        f'Certainty Gradient: Set-Size by ADI\n'
+        f'(Spearman \u03c1 = {rho_global:.2f}, {interp})',
+        fontsize=11, fontweight='bold'
     )
     ax1.grid(axis='y', alpha=0.25, linestyle='--')
-
-    # Legend for set sizes (two columns, compact)
     handles1, labels1 = ax1.get_legend_handles_labels()
     ax1.legend(handles1, labels1, title='Set size',
-               fontsize=8, title_fontsize=9,
+               fontsize=7, title_fontsize=8,
                loc='lower right', ncol=2, framealpha=0.85)
 
     # ================================================================== #
-    # PANEL 2 — Model Utility Ranking                                      #
+    # PANEL 1b — Sample Distribution by ADI (top-right)                   #
+    #   Coral bar chart with count labels — same style as previous        #
+    # ================================================================== #
+    ax1b = fig.add_subplot(gs[0, 1])
+
+    counts_adi = [total_by_bin[lbl] for lbl in ADI_LABELS]
+    bars1b = ax1b.bar(x_pos, counts_adi, bar_w,
+                      alpha=0.7, color='coral', edgecolor='darkred')
+    ax1b.set_xticks(x_pos)
+    ax1b.set_xticklabels(ADI_LABELS, fontsize=9)
+    ax1b.set_ylabel('Number of Predictions', fontsize=11, fontweight='bold')
+    ax1b.set_title('Sample Distribution by ADI', fontsize=11, fontweight='bold')
+    ax1b.grid(axis='y', alpha=0.3, linestyle='--')
+    for bar, cnt in zip(bars1b, counts_adi):
+        ax1b.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                  f'{cnt:,}', ha='center', va='bottom', fontsize=9)
+
+    # ================================================================== #
+    # PANEL 2 — Per-model stacked set-size composition (bottom-left)      #
+    #   Mirrors Panel C of plot_coverage_efficiency_classification:        #
+    #   horizontal stacked bars, one row per model, sorted by singleton % #
     # ================================================================== #
     ax2 = fig.add_subplot(gs[1, 0])
 
-    names_sorted  = [s[0] for s in model_stats]
-    rates_sorted  = [s[1] for s in model_stats]
-    colors_sorted = ['#2E7D32' if r >= utility_threshold else '#C62828'
-                     for r in rates_sorted]
-    y_pos2 = np.arange(len(names_sorted))
+    names_sorted = [s[0] for s in model_stats]   # already sorted high→low
 
-    ax2.barh(y_pos2, rates_sorted, height=0.7,
-             color=colors_sorted, alpha=0.82, edgecolor='none', linewidth=0.4)
-    ax2.axvline(utility_threshold, color='navy', linestyle='--',
-                linewidth=1.8)
-    ax2.set_yticks(y_pos2)
-    ax2.set_yticklabels(names_sorted, fontsize=7)
-    ax2.set_xlabel('Singleton Rate (%)', fontsize=11, fontweight='bold')
-    ax2.set_title('Model Utility Ranking\n(singleton rate, all models)',
+    # Build model-level set-size percentage matrix
+    model_sc = getattr(aggregator, 'model_size_counts', {})
+    # Aggregate across ADI bins for each model → overall set-size counts
+    model_sz_pct = {}   # model → {sz: pct}
+    for name in names_sorted:
+        combined = defaultdict(int)
+        for adi_bin in ADI_LABELS:
+            for sz, cnt in model_sc.get(name, {}).get(adi_bin, {}).items():
+                combined[sz] += cnt
+        total_m = sum(combined.values()) or 1
+        model_sz_pct[name] = {sz: 100.0 * cnt / total_m
+                               for sz, cnt in combined.items()}
+
+    # Build DataFrame for horizontal stacked bar (rows = models, cols = sizes)
+    sz_cols = list(range(0, max_sz + 1))
+    df_model_sz = pd.DataFrame(
+        index=names_sorted, columns=sz_cols, dtype=float
+    ).fillna(0.0)
+    for name in names_sorted:
+        for sz in sz_cols:
+            df_model_sz.loc[name, sz] = model_sz_pct[name].get(sz, 0.0)
+
+    # Plot horizontal stacked bars (same API as Panel C reference)
+    df_model_sz.plot(
+        kind='barh',
+        stacked=True,
+        ax=ax2,
+        cmap='Spectral_r',
+        edgecolor='black',
+        linewidth=0.3,
+        width=0.8,
+        legend=False
+    )
+    # Threshold line (vertical, on x-axis = singleton %)
+    # Singleton % = column 1 of df_model_sz — but x-axis is cumulative pct
+    # so we just draw the utility_threshold as a vertical dashed line
+    ax2.axvline(utility_threshold, color='navy', linestyle='--', linewidth=1.5)
+    ax2.set_xlabel('Predicted label set size percentage (%)', fontsize=10, fontweight='bold')
+    ax2.set_ylabel('')
+    ax2.set_title('Predicted Label Set Size by Model\n(sorted by singleton rate)',
                   fontsize=11, fontweight='bold')
-    ax2.set_xlim(0, 115)
-    ax2.invert_yaxis()   # highest at top
+    ax2.set_xlim(0, 100)
     ax2.grid(axis='x', alpha=0.3, linestyle='--')
+    ax2.set_yticklabels(names_sorted, fontsize=7)
+    ax2.invert_yaxis()
+    # Stats box
+    overall_sing = sum(total_by_bin[l] * singleton_pct_global[l]
+                       for l in ADI_LABELS) / max(sum(total_by_bin.values()), 1)
+    ax2.text(0.98, 0.02,
+             f'Label set size:\nMean singleton: {overall_sing:.1f}%',
+             transform=ax2.transAxes, fontsize=8,
+             va='bottom', ha='right',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
 
-    for i, r in enumerate(rates_sorted):
-        ax2.text(r + 1, i, f'{r:.1f}%', va='center', fontsize=6.5)
-
-    ax2.legend(handles=[
-        Patch(fc='#2E7D32', alpha=0.82, label=f'≥{utility_threshold:.0f}% (useful)'),
-        Patch(fc='#C62828', alpha=0.82, label=f'<{utility_threshold:.0f}% (uncertain)'),
-        plt.Line2D([0], [0], color='navy', linestyle='--', linewidth=1.8,
-                   label=f'Threshold {utility_threshold:.0f}%'),
-    ], fontsize=8, loc='lower right')
+    # Legend outside (right of panel 2, inside panel gap)
+    handles2 = [Patch(facecolor=size_colors[sz], edgecolor='black', linewidth=0.4,
+                      label=('0 (empty)' if sz == 0 else
+                             '1 (singleton)' if sz == 1 else str(sz)))
+                for sz in sz_cols if df_model_sz[sz].sum() > 0]
+    ax2.legend(handles=handles2, title='Set size', fontsize=7, title_fontsize=8,
+               loc='lower right', ncol=2, framealpha=0.85)
 
     # ================================================================== #
     # PANEL 3 — Reliability Heatmap                                        #
     # ================================================================== #
     ax3 = fig.add_subplot(gs[1, 1])
-
     cmap_heat = mpl_cm.RdYlGn
     norm_heat = Normalize(vmin=0, vmax=100)
     im = ax3.imshow(
