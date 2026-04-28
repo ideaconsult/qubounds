@@ -106,6 +106,30 @@ tasks:
         exclude_input: "{{report_exclude_code}}"
 
 
+  # AD comparison: CP metrics vs pre-computed applicability domain indices
+  # Runs independently of regression/classification tasks.
+  # Skipped gracefully if tutorial_ad_regr_file and tutorial_ad_class_file are both null.
+  - source: tasks/tutorial/ad_comparison.py
+    name: "tutorial_ad_comparison"
+    product:
+      nb:       "{{TUTORIAL_OUTPUT}}/ad_comparison/ad_comparison.ipynb"
+      data:     "{{TUTORIAL_OUTPUT}}/ad_comparison/ad_cp_correlations.xlsx"
+      plots_dir: "{{TUTORIAL_OUTPUT}}/ad_comparison/plots"
+    params:
+      regression_pred_file:     "{{tutorial_ad_regr_file}}"
+      classification_pred_file: "{{tutorial_ad_class_file}}"
+      ad_cols:                  "{{tutorial_ad_cols}}"
+      ad_col_directions:        "{{tutorial_ad_directions}}"
+      interval_width_col:       "{{tutorial_ad_interval_width_col}}"
+      covered_col_regr:         "{{tutorial_ad_covered_col_regr}}"
+      set_size_col_a:           "{{tutorial_ad_set_size_col_a}}"
+      set_size_col_b:           "{{tutorial_ad_set_size_col_b}}"
+      covered_col_a:            "{{tutorial_ad_covered_col_a}}"
+      covered_col_b:            "{{tutorial_ad_covered_col_b}}"
+      n_quantile_bins:          "{{tutorial_ad_n_bins}}"
+      alpha:                    "{{tutorial_alpha}}"
+
+
   # Classification: conformal classifier (LAC) with tutorial explanations
   - source: tasks/tutorial/mapie_classification.py
     name: "tutorial_classify_[[dataset]]_[[ncm]]"
