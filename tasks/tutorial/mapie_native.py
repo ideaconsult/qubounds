@@ -71,9 +71,7 @@ cache_path         = None
 product            = None
 upstream           = None
 dataset            = None
-external_pred_file = None   # set to a file path to run Mode 2
-external_pred_col  = "Pred"
-external_true_col  = "Exp"
+dataset_config     = None
 # -
 
 
@@ -90,6 +88,12 @@ tag        = f"tutorial_load_{dataset}"
 train_data = upstream["tutorial_load_*"][tag]["train"]
 test_data  = upstream["tutorial_load_*"][tag]["test"]
 meta_path  = upstream["tutorial_load_*"][tag]["meta"]
+
+cfg = dataset_config[dataset]
+external_pred_file = cfg.get("pred_file", None)   # set to a file path to run Mode 2
+external_pred_col  = cfg.get("pred_col", None) 
+external_true_col  = cfg.get("target_col", None) 
+smiles_col  = cfg.get("smiles_col", None) 
 
 with open(meta_path) as f:
     meta = json.load(f)
@@ -388,7 +392,7 @@ if external_pred_file is not None and Path(external_pred_file).exists():
     display(Markdown(f"- Loading external predictions from: {external_pred_file}"))
     _p = Path(external_pred_file)
     df_ext = pd.read_excel(_p) if _p.suffix in {".xlsx", ".xls"} else pd.read_csv(_p)
-    df_ext = df_ext.rename(columns={external_pred_col: "Pred"})
+    df_ext = df_ext.rename(columns={external_pred_col: "Pred", smiles_col: "Smiles"})
     if external_true_col in df_ext.columns:
         df_ext = df_ext.rename(columns={external_true_col: "Exp"})
     # Use molecules in common with test set
@@ -480,8 +484,8 @@ display(Markdown("""
 CP coverage guarantees require that calibration and test nonconformity scores
 are exchangeable (look like draws from the same distribution).
 
-KS p-value >> 0.05 -> no evidence of shift -> guarantee holds
-KS p-value << 0.05 -> possible shift -> coverage may deviate from guarantee
+- KS p-value >> 0.05 -> no evidence of shift -> guarantee holds
+- KS p-value << 0.05 -> possible shift -> coverage may deviate from guarantee
 
 We compare the calibration score distribution against the test scores.
 """))
