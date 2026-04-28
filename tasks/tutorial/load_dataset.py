@@ -35,42 +35,21 @@ Parameters (ploomber)
 """
 
 # + tags=["parameters"]
-dataset = "esol"
-smiles_col = "smiles"
-target_col = None          # None → auto-detect from built-in datasets
+dataset_config = None
+dataset_key = "esol"
 test_size = 0.2
 random_state = 42
 product = None
 # -
 
 
-# ── built-in loaders ──────────────────────────────────────────────────────────
-
-def _esol() -> pd.DataFrame:
-    """ESOL (Delaney 2004) – aqueous solubility from DeepChem mirror."""
-    url = (
-        "https://raw.githubusercontent.com/deepchem/deepchem/refs/heads/master/datasets/delaney-processed.csv"
-    )
-    df = pd.read_csv(url)
-    df = df.rename(columns={
-        "smiles": "Smiles",
-        "measured log solubility in mols per litre": "LogS",
-    })
-    return df[["Smiles", "LogS"]]
-
-
-def _lipophilicity() -> pd.DataFrame:
-    """Lipophilicity (AstraZeneca, Wu et al. 2018) from DeepChem S3 bucket."""
-    url = "https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/Lipophilicity.csv"
-    df = pd.read_csv(url)
-    # columns: CMPD_CHEMBLID, exp, smiles
-    df = df.rename(columns={"smiles": "Smiles", "exp": "Lipophilicity"})
-    return df[["Smiles", "Lipophilicity"]]
-
-
 def _from_file(path: str, smiles_col_: str, target_col_: str) -> pd.DataFrame:
-    p = Path(path)
-    if p.suffix.lower() in {".xlsx", ".xls"}:
+    if not path.startswith("http"):
+        p = Path(path)
+    else:
+        p = path
+
+    if path.lower().endswith(".xlsx"):
         df = pd.read_excel(p)
     else:
         df = pd.read_csv(p)
@@ -80,24 +59,13 @@ def _from_file(path: str, smiles_col_: str, target_col_: str) -> pd.DataFrame:
     return df
 
 
-# ── dispatch ──────────────────────────────────────────────────────────────────
+dataset = dataset_config.get(dataset_key, None)
+smiles_col = dataset["smiles_col"]
+target_col = dataset["target_col"]
+print(dataset)
+df = _from_file(dataset["path"], smiles_col, target_col)
+df.head()
 
-BUILTIN = {
-    "esol": (_esol,  "LogS"),
-    "lipo": (_lipophilicity, "Lipophilicity"),
-}
-
-if dataset in BUILTIN:
-    loader_fn, default_target = BUILTIN[dataset]
-    df = loader_fn()
-    if target_col is None:
-        target_col = default_target
-    elif target_col != default_target and default_target in df.columns:
-        df = df.rename(columns={default_target: target_col})
-else:
-    if target_col is None:
-        raise ValueError(f"target_col must be specified for dataset='{dataset}'")
-    df = _from_file(dataset, smiles_col, target_col)
 
 df = df.dropna(subset=["Smiles", target_col])
 df = df[df["Smiles"].astype(str).str.strip() != ""].reset_index(drop=True)
@@ -120,7 +88,8 @@ with pd.ExcelWriter(product["test"], engine="xlsxwriter") as w:
     test_df.to_excel(w, sheet_name="Test", index=False)
 
 meta = {
-    "dataset": dataset,
+    "dataset": dataset_key,
+    "path": dataset["path"],
     "target_col": target_col,
     "smiles_col": "Smiles",
     "n_total": len(df),

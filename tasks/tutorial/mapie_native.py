@@ -97,6 +97,7 @@ target_col = meta["target_col"]
 
 display(Markdown("# CONFORMAL PREDICTION TUTORIAL - REGRESSION"))
 display(Markdown(f"## Dataset: {meta['dataset']}   Target: {target_col}"))
+display(Markdown(f"## Dataset: {meta['dataset']}   Target: {target_col}"))
 
 # ==============================================================================
 # S1  Formal definitions
@@ -294,7 +295,6 @@ ax1.set_xlabel("|y - y_hat| / sigma_hat  (adaptive score)")
 ax1.set_ylabel("Density")
 ax1.set_title("Adaptive nonconformity scores")
 ax1.legend(fontsize=8); ax1.grid(True, alpha=0.3)
-
 ax2.hist(scores_plain, bins=40, density=True, alpha=0.7, color="#FF9800")
 ax2.axvline(q_plain, color="red", lw=2, linestyle="--",
             label=f"q_hat={q_plain:.3f}  ({1-alpha:.0%})")
@@ -302,7 +302,6 @@ ax2.set_xlabel("|y - y_hat|  (plain score)")
 ax2.set_ylabel("Density")
 ax2.set_title("Plain nonconformity scores")
 ax2.legend(fontsize=8); ax2.grid(True, alpha=0.3)
-
 plt.suptitle(f"Calibration nonconformity score distributions  (alpha={alpha})", fontsize=11)
 plt.tight_layout()
 fig_q.savefig(out_dir / "calibration_scores.png", dpi=150, bbox_inches="tight")
@@ -580,8 +579,8 @@ _true_res_cal  = np.abs(y_cal - y_cal_pred)
 _true_res_test = np.abs(y_test - y_pred_test_arr)
 
 _configs = [
-    ("Poor  (R2~0.1)",  2.0,  "#e74c3c"),
-    ("Medium (R2~0.5)", 0.8,  "#3498db"),
+    ("Poor  (R2~0.1)",  1.5,  "#e74c3c"),
+    ("Medium (R2~0.5)", 0.75,  "#3498db"),
     ("Good  (R2~0.9)",  0.25, "#27ae60"),
 ]
 

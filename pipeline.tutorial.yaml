@@ -7,20 +7,19 @@ tasks:
 
   # Regression: load dataset
   - source: tasks/tutorial/load_dataset.py
-    name: "tutorial_load_[[dataset]]"
+    name: "tutorial_load_[[dataset_key]]"
     product:
-      nb:    "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/00_load.{{report_format}}"
-      train: "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/data_train.xlsx"
-      test:  "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/data_test.xlsx"
-      meta:  "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/meta.json"
+      nb:    "{{TUTORIAL_OUTPUT}}/regression/[[dataset_key]]/00_load.{{report_format}}"
+      train: "{{TUTORIAL_OUTPUT}}/regression/[[dataset_key]]/data_train.xlsx"
+      test:  "{{TUTORIAL_OUTPUT}}/regression/[[dataset_key]]/data_test.xlsx"
+      meta:  "{{TUTORIAL_OUTPUT}}/regression/[[dataset_key]]/meta.json"
     params:
-      smiles_col:   "smiles"
-      target_col:   null
       test_size:    0.2
       random_state: 42
       cache_path:   "{{TUTORIAL_CACHE}}"
+      dataset_config: "{{tutorial_regr_datasets}}"
     grid:
-      dataset: "{{tutorial_regr_datasets}}"
+      dataset_key: "{{tutorial_regr_datasets}}"
     nbconvert_export_kwargs:
         # optionally hide the code from the report
         exclude_input: "{{report_exclude_code}}"
