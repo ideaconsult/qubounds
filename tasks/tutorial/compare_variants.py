@@ -23,8 +23,7 @@ Inputs (ploomber params)
 ---------
   dataset    : dataset key
   ncm        : sigma-model key
-  base_model : base model type for external variant
-  alpha      : miscoverage level
+    alpha      : miscoverage level
   product    : {nb, data, plot_summary, plot_width}
 """
 
@@ -34,7 +33,6 @@ product    = None
 upstream   = None
 dataset    = None
 ncm        = None
-base_model = None
 # -
 
 Path(product["data"]).parent.mkdir(parents=True, exist_ok=True)
@@ -42,7 +40,7 @@ Path(product["data"]).parent.mkdir(parents=True, exist_ok=True)
 # ── resolve upstream paths ────────────────────────────────────────────────────
 tag_load    = f"tutorial_load_{dataset}"
 tag_native  = f"tutorial_native_{dataset}_{ncm}"
-tag_ext     = f"tutorial_external_{dataset}_{ncm}_{base_model}"
+tag_ext     = f"tutorial_external_{dataset}_{ncm}"
 
 meta_path     = upstream["tutorial_load_*"][tag_load]["meta"]
 native_data   = upstream["tutorial_native_*"][tag_native]["data"]
