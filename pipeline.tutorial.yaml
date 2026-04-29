@@ -87,12 +87,12 @@ tasks:
 
   # ── Classification: load dataset ────────────────────────────────────────────
   - source: tasks/tutorial/load_dataset_classification.py
-    name: "tutorial_load_class_[[dataset]]"
+    name: "tutorial_load_class_[[dataset_key]]"
     product:
-      nb:    "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/00_load.{{report_format}}"
-      train: "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/data_train.xlsx"
-      test:  "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/data_test.xlsx"
-      meta:  "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/meta.json"
+      nb:    "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/00_load.{{report_format}}"
+      train: "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/data_train.xlsx"
+      test:  "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/data_test.xlsx"
+      meta:  "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/meta.json"
     params:
       smiles_col:     "smiles"
       target_col:     null
@@ -101,7 +101,7 @@ tasks:
       cache_path:     "{{TUTORIAL_CACHE}}"
       dataset_config: "{{tutorial_class_datasets}}"
     grid:
-      dataset: "{{tutorial_class_datasets}}"
+      dataset_key: "{{tutorial_class_datasets}}"
     nbconvert_export_kwargs:
       exclude_input: "{{report_exclude_code}}"
 

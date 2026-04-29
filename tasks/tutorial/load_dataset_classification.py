@@ -31,70 +31,49 @@ Outputs
 """
 
 # + tags=["parameters"]
-dataset      = "bbbp"
-smiles_col   = "smiles"
-target_col   = None
-test_size    = 0.2
+dataset_key = "bbbp"
+test_size = 0.2
 random_state = 42
-product      = None
+product = None
+dataset_config = None
 # -
 
-# ── built-in loaders ──────────────────────────────────────────────────────────
 
-def _bbbp() -> pd.DataFrame:
-    """Blood-Brain Barrier Permeability (Martins et al. 2012) from DeepChem S3."""
-    url = "https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/BBBP.csv"
-    df = pd.read_csv(url)
-    # columns: num, name, p_np, smiles
-    df = df.rename(columns={"smiles": "Smiles", "p_np": "BBBP"})
-    df = df[["Smiles", "BBBP"]].dropna()
-    df["BBBP"] = df["BBBP"].astype(int).map({0: "non-permeable", 1: "permeable"})
+def _from_file(path: str, smiles_col_: str, target_col_: str) -> pd.DataFrame:
+    if not path.startswith("http"):
+        p = Path(path)
+    else:
+        p = path
+
+    if path.lower().endswith(".xlsx"):
+        df = pd.read_excel(p)
+    else:
+        df = pd.read_csv(p)
+    df = df.rename(columns={smiles_col_: "Smiles", target_col_: target_col_})
+    cols = ["Smiles", target_col_]
+    df = df[[c for c in cols if c in df.columns]].dropna()
     return df
 
 
-def _clintox() -> pd.DataFrame:
-    """ClinTox (Gayvert et al. 2016) from DeepChem S3."""
-    url = "https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/clintox.csv.gz"
-    df = pd.read_csv(url)
-    # columns: smiles, FDA_APPROVED, CT_TOX
-    df = df.rename(columns={"smiles": "Smiles"})
-    df = df[["Smiles", "FDA_APPROVED"]].dropna()
-    df["FDA_APPROVED"] = df["FDA_APPROVED"].astype(int).map(
-        {0: "not_approved", 1: "approved"})
-    return df
+dataset = dataset_config.get(dataset_key, None)
+classes = {int(k): v for k, v in dataset["classes"].items()}
+smiles_col = dataset["smiles_col"]
+target_col = dataset["target_col"]
+print(dataset["classes"])
+df = _from_file(dataset["path"], smiles_col, target_col)
+try:
+    df[target_col] = df[target_col].astype(int).map(classes)
+except Exception:
+    pass    
+print(df.info())
+df.head()
 
-
-def _from_file(path, smiles_col_, target_col_):
-    p = Path(path)
-    df = pd.read_excel(p) if p.suffix.lower() in {".xlsx", ".xls"} else pd.read_csv(p)
-    df = df.rename(columns={smiles_col_: "Smiles"})
-    return df[["Smiles", target_col_]].dropna()
-
-
-# ── dispatch ──────────────────────────────────────────────────────────────────
-
-BUILTIN = {
-    "bbbp":    (_bbbp,    "BBBP"),
-    "clintox": (_clintox, "FDA_APPROVED"),
-}
-
-if dataset in BUILTIN:
-    loader_fn, default_target = BUILTIN[dataset]
-    df = loader_fn()
-    if target_col is None:
-        target_col = default_target
-    elif target_col != default_target and default_target in df.columns:
-        df = df.rename(columns={default_target: target_col})
-else:
-    if target_col is None:
-        raise ValueError(f"target_col must be specified for dataset='{dataset}'")
-    df = _from_file(dataset, smiles_col, target_col)
 
 df = df.dropna(subset=["Smiles", target_col])
 df = df[df["Smiles"].astype(str).str.strip() != ""].reset_index(drop=True)
 
 class_counts = df[target_col].value_counts()
-display(Markdown(f"## Dataset : {dataset}  |  target: {target_col}  |  n={len(df)}"))
+display(Markdown(f"## Dataset : {dataset_key}  |  target: {target_col}  |  n={len(df)}"))
 display(Markdown("- Class distribution:"))
 display(Markdown(class_counts.to_string()))
 
@@ -112,7 +91,7 @@ except ValueError:
     )
 
 train_df = train_df.reset_index(drop=True)
-test_df  = test_df.reset_index(drop=True)
+test_df = test_df.reset_index(drop=True)
 
 display(Markdown(f"### Train={len(train_df)}  Test={len(test_df)}"))
 
@@ -125,7 +104,7 @@ with pd.ExcelWriter(product["test"], engine="xlsxwriter") as w:
     test_df.to_excel(w, sheet_name="Test", index=False)
 
 meta = {
-    "dataset": dataset,
+    "dataset": dataset_key,
     "target_col": target_col,
     "smiles_col": "Smiles",
     "n_total": len(df),
