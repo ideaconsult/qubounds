@@ -42,6 +42,7 @@ cache_path     = None
 dataset_config = None
 product        = None
 upstream       = None
+threshold = 0.5
 # -
 
 import json
@@ -159,7 +160,14 @@ display(Markdown(f"- Loaded {len(_ext)} rows  columns: {_ext.columns.tolist()}")
 if split_col and split_col in _ext.columns:
     display(Markdown(f"- Using `{split_col}` column to split calibration / test rows."))
     _ext_cal  = _ext[_ext[split_col].astype(str).str.lower() == split_train_value.lower()].copy()
-    _ext_test = _ext[_ext[split_col].astype(str).str.lower() == split_test_value.lower()].copy()
+    vals = split_test_value
+    if isinstance(vals, str):
+        vals = [vals]
+    else:
+        vals = list(vals)
+    vals = [v.lower() for v in vals]
+    mask = _ext[split_col].astype(str).str.lower().isin(vals)
+    _ext_test = _ext[mask].copy()
     display(Markdown(f"  - Calibration rows : {len(_ext_cal)}"))
     display(Markdown(f"  - Test rows        : {len(_ext_test)}"))
 else:
@@ -431,21 +439,21 @@ else:
     display(Markdown(f"Comparing CP interval width against: {_available_ad}"))
     display(Markdown("""
 **Interpretation:**
-rho < 0 (similarity direction): CP and AD agree -- wider intervals outside AD.
-rho near 0: CP adds information AD misses (e.g. out-of-AD but mechanistically
-reliable predictions -- the BCF/polymer case).
+- rho < 0 (similarity direction): CP and AD agree -- wider intervals outside AD.
+- rho near 0: CP adds information AD misses (e.g. out-of-AD but mechanistically
+reliable predictions ).
 """))
     df_test_ad["Width_adaptive"]  = width_a
     df_test_ad["Covered_adaptive"] = covered_a.astype(int)
     for ad_col, ad_dir in zip(_available_ad, ad_col_directions[:len(_available_ad)]):
         display(Markdown(f"### {ad_col}  (direction: {ad_dir})"))
         ad_raw = df_test_ad[ad_col].astype(float)
-        if ad_dir == "distance":
-            _rng = ad_raw.max() - ad_raw.min()
-            ad_norm = 1.0 - (ad_raw - ad_raw.min()) / _rng if _rng > 0 \
-                      else pd.Series(np.ones(len(ad_raw)), index=ad_raw.index)
-        else:
-            ad_norm = ad_raw.copy()
+        #if ad_dir == "distance":
+        #    _rng = ad_raw.max() - ad_raw.min()
+        #    ad_norm = 1.0 - (ad_raw - ad_raw.min()) / _rng if _rng > 0 \
+        #              else pd.Series(np.ones(len(ad_raw)), index=ad_raw.index)
+        #else:
+        ad_norm = ad_raw.copy()
         mask      = ad_norm.notna() & pd.Series(width_a).notna()
         ad_norm_c = ad_norm[mask].reset_index(drop=True)
         cp_w_c    = pd.Series(width_a)[mask].reset_index(drop=True)
@@ -460,8 +468,12 @@ reliable predictions -- the BCF/polymer case).
         expected = "negative" if ad_dir == "similarity" else "positive"
         display(Markdown(f"- Spearman rho={rho:.3f}  p={pval:.4f}  "
                          f"95% CI [{rho_lo:.3f}, {rho_hi:.3f}]  (expected {expected})"))
-        in_ad  = cp_w_c[ad_norm_c >= 0.5].dropna()
-        out_ad = cp_w_c[ad_norm_c <  0.5].dropna()
+        if ad_dir == "similarity":
+            in_ad  = cp_w_c[ad_norm_c >= threshold]
+            out_ad = cp_w_c[ad_norm_c <  threshold]
+        else:  # distance
+            in_ad  = cp_w_c[ad_norm_c <= threshold]
+            out_ad = cp_w_c[ad_norm_c >  threshold]
         fig_ad, axes_ad = plt.subplots(2, 2, figsize=(13, 10))
         axes_ad[0, 0].scatter(ad_norm_c, cp_w_c, alpha=0.25, s=8, color="#2196F3", rasterized=True)
         try:
@@ -526,8 +538,11 @@ reliable predictions -- the BCF/polymer case).
         axes_ad[1, 1].set_xlabel("Adaptive interval width"); axes_ad[1, 1].set_ylabel("Density")
         axes_ad[1, 1].set_title("Width distribution: In-AD vs Out-of-AD")
         axes_ad[1, 1].legend(fontsize=8); axes_ad[1, 1].grid(True, alpha=0.3)
-        plt.suptitle(f"{dataset}: width vs {ad_col}  (rho={rho:.3f})\n"
-                     "Negative rho = wider intervals outside AD", fontsize=10)
+        if ad_dir == "similarity":
+            interpretation = "Negative rho = wider intervals outside AD"
+        else:
+            interpretation = "Positive rho = wider intervals outside AD"        
+        plt.suptitle(f"{dataset}: width vs {ad_col}  (rho={rho:.3f})\n {interpretation}", fontsize=10)
         plt.tight_layout()
         _plot_path = out_dir / f"ext_ad_{ad_col}.png"
         fig_ad.savefig(_plot_path, dpi=150, bbox_inches="tight")
