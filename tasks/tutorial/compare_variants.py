@@ -55,7 +55,11 @@ display(Markdown(f"# Comparison: {dataset_name}  (alpha={alpha}, target={1-alpha
 
 # ── load metrics from each variant ───────────────────────────────────────────
 native_metrics   = pd.read_excel(native_data,   sheet_name="Metrics")
-external_metrics = pd.read_excel(external_data, sheet_name="Metrics")
+try:
+    external_metrics = pd.read_excel(external_data, sheet_name="Metrics")
+except Exception as err:
+    print(err)    
+    external_metrics = pd.DataFrame()
 
 # mapie_native.py writes one row per mode (Mode1_internal, Mode2_external)
 # mapie_external.py writes one row per variant (adaptive, plain)
