@@ -232,11 +232,12 @@ sigma_test_safe = np.maximum(sigma_pred_test, eps)
 # ==============================================================================
 display(Markdown("## S3  Align external predictions with calibration / test sets"))
 
+
 _ext_cal_idx  = _ext_cal.set_index("Smiles")[pred_col]
 _ext_test_idx = _ext_test.set_index("Smiles")[pred_col]
-
-y_cal_pred_ext  = cal_df["Smiles"].map(_ext_cal_idx).values.astype(float)
-y_test_pred_ext = test_df["Smiles"].map(_ext_test_idx).values.astype(float)
+lookup = dict(zip(_ext_cal_idx.index, _ext_cal_idx.values))
+y_cal_pred_ext = cal_df["Smiles"].map(lookup).values.astype(float)
+y_test_pred_ext = test_df["Smiles"].map(lookup).values.astype(float)
 
 n_cal_matched  = (~np.isnan(y_cal_pred_ext)).sum()
 n_test_matched = (~np.isnan(y_test_pred_ext)).sum()
