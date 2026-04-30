@@ -7,19 +7,38 @@ tasks:
 
   # ── Regression: load dataset ────────────────────────────────────────────────
   - source: tasks/tutorial/load_dataset.py
-    name: "tutorial_load_[[dataset_key]]"
+    name: "tutorial_load_regr_[[dataset_key]]"
     product:
       nb:    "{{TUTORIAL_OUTPUT}}/regression/[[dataset_key]]/00_load.{{report_format}}"
-      train: "{{TUTORIAL_OUTPUT}}/regression/[[dataset_key]]/data_train.xlsx"
-      test:  "{{TUTORIAL_OUTPUT}}/regression/[[dataset_key]]/data_test.xlsx"
+      data: "{{TUTORIAL_OUTPUT}}/regression/[[dataset_key]]/data.xlsx"
       meta:  "{{TUTORIAL_OUTPUT}}/regression/[[dataset_key]]/meta.json"
     params:
       test_size:      0.2
       random_state:   42
       cache_path:     "{{TUTORIAL_CACHE}}"
       dataset_config: "{{tutorial_regr_datasets}}"
+      task: "regression"
     grid:
       dataset_key: "{{tutorial_regr_datasets}}"
+    nbconvert_export_kwargs:
+      exclude_input: "{{report_exclude_code}}"
+
+
+# ── Classification: load dataset ────────────────────────────────────────────
+  - source: tasks/tutorial/load_dataset.py
+    name: "tutorial_load_class_[[dataset_key]]"
+    product:
+      nb:    "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/00_load.{{report_format}}"
+      data: "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/data.xlsx"
+      meta:  "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/meta.json"
+    params:
+      test_size:      0.2
+      random_state:   42
+      cache_path:     "{{TUTORIAL_CACHE}}"
+      dataset_config: "{{tutorial_class_datasets}}"
+      task: "classification"
+    grid:
+      dataset_key: "{{tutorial_class_datasets}}"
     nbconvert_export_kwargs:
       exclude_input: "{{report_exclude_code}}"
 
@@ -27,7 +46,7 @@ tasks:
   # ── Regression: internal base model, adaptive + plain CP, tutorial plots ────
   - source: tasks/tutorial/mapie_native.py
     name: "tutorial_native_[[dataset]]_[[ncm]]"
-    upstream: ["tutorial_load_*"]
+    upstream: ["tutorial_load_regr_*"]
     product:
       nb:               "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/01_native_[[ncm]].{{report_format}}"
       data:             "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/native_[[ncm]].xlsx"
@@ -37,6 +56,7 @@ tasks:
       alpha:          "{{tutorial_alpha}}"
       cache_path:     "{{TUTORIAL_CACHE}}"
       dataset_config: "{{tutorial_regr_datasets}}"
+      base_model: "lgbm"
     grid:
       dataset: "{{tutorial_regr_datasets}}"
       ncm:     "{{tutorial_ncm}}"
@@ -48,9 +68,10 @@ tasks:
   #    Reads pred_file, ad_cols, ad_col_directions from dataset_config[dataset].
   #    AD comparison is embedded here (not a separate task) because AD metrics
   #    come from the same external file as the predictions.
-  - source: tasks/tutorial/mapie_external.py
+
+  - source: tasks/tutorial/mapie_native.py
     name: "tutorial_external_[[dataset]]_[[ncm]]"
-    upstream: ["tutorial_load_*"]
+    upstream: ["tutorial_load_regr_*"]
     product:
       nb:               "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/02_external_[[ncm]].{{report_format}}"
       data:             "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/external_[[ncm]].xlsx"
@@ -60,17 +81,17 @@ tasks:
       alpha:          "{{tutorial_alpha}}"
       cache_path:     "{{TUTORIAL_CACHE}}"
       dataset_config: "{{tutorial_regr_datasets}}"
+      base_model: "file"
     grid:
       dataset: "{{tutorial_regr_datasets}}"
       ncm:     "{{tutorial_ncm}}"
     nbconvert_export_kwargs:
       exclude_input: "{{report_exclude_code}}"
 
-
   # ── Regression: compare native vs external variants ─────────────────────────
   - source: tasks/tutorial/compare_variants.py
     name: "tutorial_compare_[[dataset]]_[[ncm]]"
-    upstream: ["tutorial_native_*", "tutorial_external_*", "tutorial_load_*"]
+    upstream: ["tutorial_native_*", "tutorial_external_*", "tutorial_load_regr_*"]
     product:
       nb:           "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/03_compare_[[ncm]].{{report_format}}"
       data:         "{{TUTORIAL_OUTPUT}}/regression/[[dataset]]/compare_[[ncm]].xlsx"
@@ -85,28 +106,7 @@ tasks:
       exclude_input: "{{report_exclude_code}}"
 
 
-  # ── Classification: load dataset ────────────────────────────────────────────
-  - source: tasks/tutorial/load_dataset_classification.py
-    name: "tutorial_load_class_[[dataset_key]]"
-    product:
-      nb:    "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/00_load.{{report_format}}"
-      train: "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/data_train.xlsx"
-      test:  "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/data_test.xlsx"
-      meta:  "{{TUTORIAL_OUTPUT}}/classification/[[dataset_key]]/meta.json"
-    params:
-      smiles_col:     "smiles"
-      target_col:     null
-      test_size:      0.2
-      random_state:   42
-      cache_path:     "{{TUTORIAL_CACHE}}"
-      dataset_config: "{{tutorial_class_datasets}}"
-    grid:
-      dataset_key: "{{tutorial_class_datasets}}"
-    nbconvert_export_kwargs:
-      exclude_input: "{{report_exclude_code}}"
-
-
-  # ── Classification: conformal classifier (LAC + NCM), tutorial plots ────────
+   # ── Classification: conformal classifier (LAC + NCM), tutorial plots ────────
   - source: tasks/tutorial/mapie_classification.py
     name: "tutorial_classify_[[dataset]]_[[ncm]]"
     upstream: ["tutorial_load_class_*"]
@@ -118,27 +118,10 @@ tasks:
       alpha:          "{{tutorial_alpha}}"
       cache_path:     "{{TUTORIAL_CACHE}}"
       dataset_config: "{{tutorial_class_datasets}}"
+      base_model: "lgbm"
     grid:
       dataset: "{{tutorial_class_datasets}}"
       ncm:     "{{tutorial_class_ncm}}"
     nbconvert_export_kwargs:
       exclude_input: "{{report_exclude_code}}"
 
-
-  - source: tasks/tutorial/mapie_class_external.py
-    name: "tutorial_classexternal_[[dataset]]_[[ncm]]"
-    upstream: ["tutorial_load_class_*"]
-    product:
-      nb:               "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/02_external_[[ncm]].{{report_format}}"
-      data:             "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/external_[[ncm]].xlsx"
-      ncmodel_adaptive: "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/external_[[ncm]]_adaptive.pkl"
-      ncmodel_plain:    "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/external_[[ncm]]_plain.pkl"
-    params:
-      alpha:          "{{tutorial_alpha}}"
-      cache_path:     "{{TUTORIAL_CACHE}}"
-      dataset_config: "{{tutorial_regr_datasets}}"
-    grid:
-      dataset: "{{tutorial_regr_datasets}}"
-      ncm:     "{{tutorial_ncm}}"
-    nbconvert_export_kwargs:
-      exclude_input: "{{report_exclude_code}}"

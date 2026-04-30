@@ -357,7 +357,7 @@ def get_props():
 
 def writeExcel_epa(output_file, model_json, 
                    pred_value="PredictedValue", exp_value="ExperimentalValue",
-                   df=None, adi_columns=None, software="VEGA"):
+                   df=None, adi_columns=None, software="VEGA", extra_sheet=True):
     key = model_json.get("info",{}).get("key", None)
     name = model_json.get("info",{}).get("name", None)
     version = model_json.get("info",{}).get("version", None)
@@ -432,20 +432,21 @@ def writeExcel_epa(output_file, model_json,
         summary_df.to_excel(writer, sheet_name='Summary sheet', index=False)
         training_df.to_excel(writer, sheet_name='Training', index=False)
         test_df.to_excel(writer, sheet_name='Test', index=False)
-        try:
-            cols = ["Smiles", exp_value, pred_value]
-            if adi_columns is not None:
-                for col in adi_columns:
-                    if col in test_df.columns:
-                        cols.append(col)
-                print(cols)
-            df = test_df[cols].rename(columns={
-                pred_value: key,
-                exp_value: "Exp"
-            })
-            df.to_excel(writer, sheet_name=key, index=False)
-        except Exception as x:
-            print(key, x)
+        if extra_sheet:
+            try:
+                cols = ["Smiles", exp_value, pred_value]
+                if adi_columns is not None:
+                    for col in adi_columns:
+                        if col in test_df.columns:
+                            cols.append(col)
+                    print(cols)
+                df = test_df[cols].rename(columns={
+                    pred_value: key,
+                    exp_value: "Exp"
+                })
+                df.to_excel(writer, sheet_name=key, index=False)
+            except Exception as x:
+                print(key, x)
 
     print(f"Excel file '{output_file}' created with all sheets.")
 

@@ -31,6 +31,7 @@ cache_path     = None
 dataset_config = None
 product        = None
 upstream       = None
+base_model = "lgbm"
 # -
 
 import json
@@ -49,9 +50,9 @@ from lightgbm import LGBMRegressor
 from mapie.regression import SplitConformalRegressor
 from mapie.conformity_scores import ResidualNormalisedScore, AbsoluteConformityScore
 
-from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
-from tasks.mapie_diagnostic import make_sigma_model, sigma_diagnostics, detect_residual_degeneracy
-from tasks.mapie_regression import ExternalPredictor
+from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+from qubounds.mapie_diagnostic import make_sigma_model, sigma_diagnostics, detect_residual_degeneracy
+from qubounds.mapie_regression import ExternalPredictor
 %matplotlib inline
 
 Path(product["data"]).parent.mkdir(parents=True, exist_ok=True)
@@ -60,14 +61,14 @@ out_dir = Path(product["data"]).parent
 # ==============================================================================
 # S0  Resolve upstream and dataset config
 # ==============================================================================
-tag        = f"tutorial_load_{dataset}"
-train_data = upstream["tutorial_load_*"][tag]["train"]
-test_data  = upstream["tutorial_load_*"][tag]["test"]
-meta_path  = upstream["tutorial_load_*"][tag]["meta"]
+tag        = f"tutorial_load_regr_{dataset}"
+data = upstream["tutorial_load_regr_*"][tag]["data"]
+meta_path  = upstream["tutorial_load_regr_*"][tag]["meta"]
 
 with open(meta_path) as f:
     meta = json.load(f)
 target_col = meta["target_col"]
+pred_col = meta["pred_col"]
 
 display(Markdown("# CONFORMAL PREDICTION TUTORIAL - REGRESSION (internal model)"))
 display(Markdown(f"## Dataset: {meta['dataset']}   Target: {target_col}"))
@@ -127,14 +128,18 @@ Split CP requires THREE disjoint sets:
 The calibration set is CONSUMED by the conformal procedure.
 """))
 
-train_df = pd.read_excel(train_data, sheet_name="Training")
-test_df  = pd.read_excel(test_data,  sheet_name="Test")
+train_df = pd.read_excel(data, sheet_name="Training")
+test_df  = pd.read_excel(data,  sheet_name="Test")
 train_df = train_df.dropna(subset=["Smiles", target_col]).reset_index(drop=True)
 test_df  = test_df.dropna(subset=["Smiles", target_col]).reset_index(drop=True)
 
-fit_df, cal_df = train_test_split(train_df, test_size=0.2, random_state=42)
-fit_df = fit_df.reset_index(drop=True)
-cal_df = cal_df.reset_index(drop=True)
+if base_model == "file":  # we use train as calibration
+    fit_df = train_df
+    cal_df = train_df
+else:    
+    fit_df, cal_df = train_test_split(train_df, test_size=0.2, random_state=42)
+    fit_df = fit_df.reset_index(drop=True)
+    cal_df = cal_df.reset_index(drop=True)
 
 display(Markdown(f"- Fit set: {len(fit_df)}  Calibration: {len(cal_df)}  Test: {len(test_df)}"))
 
@@ -152,11 +157,18 @@ X_fit  = to_ecfp(fit_df);  y_fit  = fit_df[target_col].values.astype(float)
 X_cal  = to_ecfp(cal_df);  y_cal  = cal_df[target_col].values.astype(float)
 X_test = to_ecfp(test_df); y_test = test_df[target_col].values.astype(float)
 
-base_model = LGBMRegressor(objective="huber", random_state=42, verbose=-1)
-base_model.fit(X_fit, y_fit)
-y_fit_pred  = base_model.predict(X_fit)
-y_cal_pred  = base_model.predict(X_cal)
-y_test_pred = base_model.predict(X_test)
+if base_model == "lgbm":
+    base_model_ = LGBMRegressor(objective="huber", random_state=42, verbose=-1)
+    base_model_.fit(X_fit, y_fit)
+    y_fit_pred  = base_model_.predict(X_fit)
+    y_cal_pred  = base_model_.predict(X_cal)
+    y_test_pred = base_model_.predict(X_test)
+elif base_model == "file":
+    y_fit_pred  = fit_df[pred_col]
+    y_cal_pred  = cal_df[pred_col]
+    y_test_pred = test_df[pred_col]
+else:
+    assert False,"f{base_model} not supported"
 
 display(Markdown(f"- Base model R2 on cal set: {r2_score(y_cal, y_cal_pred):.3f}  (honest)"))
 

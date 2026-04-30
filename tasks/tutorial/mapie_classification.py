@@ -77,8 +77,7 @@ out_dir = Path(product["data"]).parent
 # S0  Resolve upstream
 # ==============================================================================
 tag        = f"tutorial_load_class_{dataset}"
-train_data = upstream["tutorial_load_class_*"][tag]["train"]
-test_data  = upstream["tutorial_load_class_*"][tag]["test"]
+data = upstream["tutorial_load_class_*"][tag]["data"]
 meta_path  = upstream["tutorial_load_class_*"][tag]["meta"]
 
 with open(meta_path) as f:
@@ -138,8 +137,8 @@ class: ceil(1/alpha) - 1 = {int(np.ceil(1/alpha))-1} (for alpha={alpha}).
 # ==============================================================================
 display(Markdown("## S2  Data splits and class balance"))
 
-train_df = pd.read_excel(train_data, sheet_name="Training")
-test_df  = pd.read_excel(test_data,  sheet_name="Test")
+train_df = pd.read_excel(data, sheet_name="Training")
+test_df  = pd.read_excel(data,  sheet_name="Test")
 train_df = train_df.dropna(subset=["Smiles", target_col]).reset_index(drop=True)
 test_df  = test_df.dropna(subset=["Smiles", target_col]).reset_index(drop=True)
 
