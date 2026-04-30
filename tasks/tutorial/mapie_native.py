@@ -32,6 +32,7 @@ dataset_config = None
 product        = None
 upstream       = None
 base_model = "lgbm"
+threshold = 0.5
 # -
 
 import json
@@ -45,7 +46,7 @@ from pathlib import Path
 from IPython.display import display, Markdown
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
-from scipy.stats import ks_2samp
+from scipy.stats import ks_2samp, spearmanr, mannwhitneyu
 from lightgbm import LGBMRegressor
 from mapie.regression import SplitConformalRegressor
 from mapie.conformity_scores import ResidualNormalisedScore, AbsoluteConformityScore
@@ -58,6 +59,12 @@ from qubounds.mapie_regression import ExternalPredictor
 Path(product["data"]).parent.mkdir(parents=True, exist_ok=True)
 out_dir = Path(product["data"]).parent
 
+colors = {
+    "TRAINING": "#4CAF50",  
+    "CALIBRATION":  "#FF9800",
+    "TEST":   "#2196F3",   
+}
+
 # ==============================================================================
 # S0  Resolve upstream and dataset config
 # ==============================================================================
@@ -68,9 +75,12 @@ meta_path  = upstream["tutorial_load_regr_*"][tag]["meta"]
 with open(meta_path) as f:
     meta = json.load(f)
 target_col = meta["target_col"]
-pred_col = meta["pred_col"]
+pred_col = meta.get("pred_col", None)
+ad_cols = meta.get("ad_cols", [])
+ad_col_directions = meta.get("ad_col_directions",[])
+n_quantile_bins = meta.get("n_quantile_bins", 5)
 
-display(Markdown("# CONFORMAL PREDICTION TUTORIAL - REGRESSION (internal model)"))
+display(Markdown(f"# CONFORMAL PREDICTION TUTORIAL - REGRESSION ({'external' if base_model=='file' else 'internal'} model)"))
 display(Markdown(f"## Dataset: {meta['dataset']}   Target: {target_col}"))
 
 # ==============================================================================
@@ -133,16 +143,28 @@ test_df  = pd.read_excel(data,  sheet_name="Test")
 train_df = train_df.dropna(subset=["Smiles", target_col]).reset_index(drop=True)
 test_df  = test_df.dropna(subset=["Smiles", target_col]).reset_index(drop=True)
 
-if base_model == "file":  # we use train as calibration
-    fit_df = train_df
-    cal_df = train_df
-else:    
+if base_model == "file": 
+    df_test_ad = test_df.copy()
+    _available_ad = []
+    if ad_cols:
+        for _ac in ad_cols:
+            if _ac in test_df.columns:
+                df_test_ad[_ac] = test_df["Smiles"].map(
+                    test_df.set_index("Smiles")[_ac]).values
+                _available_ad.append(_ac)
+            else:
+                display(Markdown(f"- WARNING: AD column `{_ac}` not found in external file."))
+        if _available_ad:
+            display(Markdown(f"- AD columns loaded: {_available_ad}"))
+    fit_df = train_df.copy().reset_index(drop=True)
+    cal_df, test_df = train_test_split(test_df, test_size=0.2, random_state=42)
+    test_df = test_df.reset_index(drop=True)
+    cal_df = cal_df.reset_index(drop=True)                
+else:   
+    _available_ad = [] 
     fit_df, cal_df = train_test_split(train_df, test_size=0.2, random_state=42)
     fit_df = fit_df.reset_index(drop=True)
     cal_df = cal_df.reset_index(drop=True)
-
-display(Markdown(f"- Fit set: {len(fit_df)}  Calibration: {len(cal_df)}  Test: {len(test_df)}"))
-
 # ==============================================================================
 # S3  Fingerprints and base model
 # ==============================================================================
@@ -164,11 +186,11 @@ if base_model == "lgbm":
     y_cal_pred  = base_model_.predict(X_cal)
     y_test_pred = base_model_.predict(X_test)
 elif base_model == "file":
-    y_fit_pred  = fit_df[pred_col]
-    y_cal_pred  = cal_df[pred_col]
-    y_test_pred = test_df[pred_col]
+    y_fit_pred  = fit_df[pred_col].values.astype(float)
+    y_cal_pred  = cal_df[pred_col].values.astype(float)
+    y_test_pred = test_df[pred_col].values.astype(float)
 else:
-    assert False,"f{base_model} not supported"
+    assert False,f"{base_model} not supported"
 
 display(Markdown(f"- Base model R2 on cal set: {r2_score(y_cal, y_cal_pred):.3f}  (honest)"))
 
@@ -193,6 +215,7 @@ sigma_pred_test = sigma_model.predict(X_test)
 
 diag_s     = sigma_diagnostics(residuals_fit,                   sigma_pred_fit)
 diag_s_cal = sigma_diagnostics(np.abs(y_cal - y_cal_pred),      sigma_pred_cal)
+diag_s_test = sigma_diagnostics(np.abs(y_test - y_test_pred),      sigma_pred_test)
 
 display(Markdown(f"- Sigma R2 fit={diag_s['r2']:.3f}  cal={diag_s_cal['r2']:.3f}"))
 
@@ -200,6 +223,8 @@ fig_s, ax_s = plt.subplots(figsize=(5, 4))
 ax_s.scatter(residuals_fit, sigma_pred_fit, alpha=0.3, s=8, c="#2196F3", label="Fit")
 ax_s.scatter(np.abs(y_cal - y_cal_pred), sigma_pred_cal, alpha=0.3, s=8,
              c="#FF9800", label="Cal")
+ax_s.scatter(np.abs(y_test - y_test_pred), sigma_pred_test, alpha=0.3, s=8,
+             c="#00FF00", label="Test")
 lim = max(residuals_fit.max(), sigma_pred_fit.max()) * 1.05
 ax_s.plot([0, lim], [0, lim], "k--", lw=1)
 ax_s.set_xlabel("|y - y_hat|"); ax_s.set_ylabel("sigma_hat(x)")
@@ -377,20 +402,61 @@ plt.show(); plt.close(fig_pi)
 # S9  Exchangeability (KS test)
 # ==============================================================================
 display(Markdown("## S9  Exchangeability check (KS test)"))
+# Compute conformal p-values for each test point
+# scores_adaptive is the calibration NCM scores array
+scores_test = np.abs(y_test - y_test_pred) / sigma_test_safe
+p_values = np.array([
+    np.mean(scores_adaptive >= s_i)   # fraction of cal scores >= test score
+    for s_i in scores_test
+])
 
-scores_test_adap = np.abs(y_test - y_pred_a) / sigma_test_safe
-ks_stat, ks_p = ks_2samp(scores_adaptive, scores_test_adap)
-fig_ks, ax_ks = plt.subplots(figsize=(6, 4))
-ax_ks.hist(scores_adaptive,  bins="auto", density=True, alpha=0.5, label="Calibration", color="#2196F3")
-ax_ks.hist(scores_test_adap, bins="auto", density=True, alpha=0.5, label="Test",        color="#FF9800")
-ax_ks.set_xlabel("Nonconformity score"); ax_ks.set_ylabel("Density")
-ax_ks.set_title(f"Exchangeability: cal vs test  (KS p={ks_p:.4f})")
-ax_ks.legend(fontsize=8); ax_ks.grid(True, alpha=0.3)
+#- the two-sample KS test verifies if distributional shift between calibration and test nonconformity scores; 
+#- however, the p-value uniformity test may reveal residual non-uniformity, consistent with finite calibration set size / sigma model bias
+# and is the more sensitive diagnostic.
+
+scores = {
+    "CALIBRATION":   scores_adaptive,
+    "TEST":  scores_test,
+    "p-values TEST": p_values,
+    "uniform" : "uniform"
+}
+pairs = [
+    ("CALIBRATION",   "TEST"),
+    ("p-values TEST", "uniform")
+]
+ks_p = {}
+fig_ks, axes = plt.subplots(1,len(pairs), figsize=(12, 4))
+for ax, (k1, k2) in zip(axes, pairs):
+    s1, s2 = scores[k1], scores[k2]
+    ks_stat, _ks_p = ks_2samp(s1, s2)
+    ks_p[f"{k1}_{k2}"] = _ks_p
+    msg = f"KS p={_ks_p:.4f} ({'OK' if _ks_p > 0.05 else 'WARNING: possible shift'})"    
+
+    ax.hist(s1, bins="auto", density=True, alpha=0.5,
+            label=k1, color=colors.get(k1, "gray"))
+    if k2 == "uniform":
+        ax.axhline(y=1, color=colors.get(k2, "red"), linestyle='--', 
+               label=k2, linewidth=2)        
+        ax.set_xlabel("p-values")
+    else:
+        ax.hist(s2, bins="auto", density=True, alpha=0.5,
+                label=k2, color=colors.get(k2, "red"))
+        ax.set_xlabel("Nonconformity score")
+
+    ax.set_title(f"{k1} vs {k2}\n{msg}")
+    
+    ax.set_ylabel("Density")
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    # ax.set_xscale("log")
+    # ax.set_yscale("log")
+
+    display(Markdown(f"- [{k1} - {k2}] {msg}"))
 plt.tight_layout()
 fig_ks.savefig(out_dir / "exchangeability_ks.png", dpi=150, bbox_inches="tight")
-plt.show(); plt.close(fig_ks)
-display(Markdown(f"- KS p={ks_p:.4f}  "
-                 f"({'OK' if ks_p > 0.05 else 'WARNING: possible shift'})"))
+plt.show()
+plt.close(fig_ks)
+
 
 # ==============================================================================
 # S10  Coverage guarantee sweep across alpha
@@ -497,7 +563,155 @@ plt.show(); plt.close(fig_ncm)
 display(pd.DataFrame(ncm_rows))
 
 # ==============================================================================
-# S12  Save results
+# S12  AD comparison
+# ==============================================================================
+display(Markdown("## S12  AD comparison: interval width vs applicability domain indices"))
+
+def compare_AD_width(df_test_ad):
+    ad_results = []
+    if not _available_ad:
+        display(Markdown(
+            "### Skipped\n\n"
+            "No AD columns available in the external file. To enable, add to "
+            f"`env.tutorial.yaml` under `{dataset}`:\n\n"
+            "```yaml\n  ad_cols: [\"ADI\"]\n  ad_col_directions: [\"similarity\"]\n```"
+        ))
+    else:
+        display(Markdown(f"Comparing CP interval width against: {_available_ad}"))
+        display(Markdown("""
+    **Interpretation:**
+    - rho < 0 (similarity direction): CP and AD agree -- wider intervals outside AD.
+    - rho near 0: CP adds information AD misses (e.g. out-of-AD but mechanistically
+    reliable predictions ).
+    """))
+        # now using full test 
+        X_test = to_ecfp(df_test_ad); y_test = df_test_ad[target_col].values.astype(float)
+        y_test_pred = df_test_ad[pred_col].values.astype(float)
+        estimator_a.y_pred = y_test_pred
+        y_pred_a, y_pis_a = mapie_adaptive.predict_interval(X_test)
+        lower_a  = y_pis_a[:, 0, 0]; upper_a = y_pis_a[:, 1, 0]
+        width_a  = upper_a - lower_a
+        covered_a = (y_test >= lower_a) & (y_test <= upper_a)
+
+        df_test_ad["Width_adaptive"]  = width_a
+        df_test_ad["Covered_adaptive"] = covered_a.astype(int)
+        for ad_col, ad_dir in zip(_available_ad, ad_col_directions[:len(_available_ad)]):
+            display(Markdown(f"### {ad_col}  (direction: {ad_dir})"))
+            ad_raw = df_test_ad[ad_col].astype(float)
+            #if ad_dir == "distance":
+            #    _rng = ad_raw.max() - ad_raw.min()
+            #    ad_norm = 1.0 - (ad_raw - ad_raw.min()) / _rng if _rng > 0 \
+            #              else pd.Series(np.ones(len(ad_raw)), index=ad_raw.index)
+            #else:
+            ad_norm = ad_raw.copy()
+            mask      = ad_norm.notna() & pd.Series(width_a).notna()
+            ad_norm_c = ad_norm[mask].reset_index(drop=True)
+            cp_w_c    = pd.Series(width_a)[mask].reset_index(drop=True)
+            covered_c = pd.Series(covered_a.astype(int))[mask].reset_index(drop=True)
+            rho, pval = spearmanr(ad_norm_c.values, cp_w_c.values)
+            rng_b     = np.random.default_rng(42)
+            boot_rhos = [spearmanr(
+                ad_norm_c.values[_i := rng_b.integers(0, len(ad_norm_c), len(ad_norm_c))],
+                cp_w_c.values[_i])[0] for _ in range(1000)]
+            rho_lo = np.quantile(boot_rhos, 0.025)
+            rho_hi = np.quantile(boot_rhos, 0.975)
+            expected = "negative" if ad_dir == "similarity" else "positive"
+            display(Markdown(f"- Spearman rho={rho:.3f}  p={pval:.4f}  "
+                            f"95% CI [{rho_lo:.3f}, {rho_hi:.3f}]  (expected {expected})"))
+            if ad_dir == "similarity":
+                in_ad  = cp_w_c[ad_norm_c >= threshold]
+                out_ad = cp_w_c[ad_norm_c <  threshold]
+            else:  # distance
+                in_ad  = cp_w_c[ad_norm_c <= threshold]
+                out_ad = cp_w_c[ad_norm_c >  threshold]
+            fig_ad, axes_ad = plt.subplots(2, 2, figsize=(13, 10))
+            axes_ad[0, 0].scatter(ad_norm_c, cp_w_c, alpha=0.25, s=8, color="#2196F3", rasterized=True)
+            try:
+                z  = np.polyfit(ad_norm_c, cp_w_c, 1)
+                xr = np.linspace(ad_norm_c.min(), ad_norm_c.max(), 100)
+                axes_ad[0, 0].plot(xr, np.poly1d(z)(xr), "r-", lw=2, alpha=0.7, label="trend")
+            except Exception:
+                pass
+            axes_ad[0, 0].set_xlabel(f"{ad_col} (normalised)")
+            axes_ad[0, 0].set_ylabel("Adaptive interval width")
+            axes_ad[0, 0].set_title(f"Spearman rho={rho:.3f}  p={pval:.4f}\n"
+                                    f"95% CI [{rho_lo:.3f}, {rho_hi:.3f}]  (expected {expected})", fontsize=9)
+            axes_ad[0, 0].legend(fontsize=7); axes_ad[0, 0].grid(True, alpha=0.3)
+            if len(in_ad) > 1 and len(out_ad) > 1:
+                bp = axes_ad[0, 1].boxplot([in_ad.values, out_ad.values], patch_artist=True,
+                                            widths=0.5, medianprops=dict(color="black", lw=2))
+                for patch, c_ in zip(bp["boxes"], ["#27ae60", "#e74c3c"]):
+                    patch.set_facecolor(c_)
+                u_stat, u_p = mannwhitneyu(in_ad, out_ad, alternative="two-sided")
+                axes_ad[0, 1].text(0.98, 0.97, f"Mann-Whitney p={u_p:.4f}",
+                                transform=axes_ad[0, 1].transAxes, ha="right", va="top",
+                                fontsize=8, bbox=dict(boxstyle="round", fc="white", alpha=0.8))
+            axes_ad[0, 1].set_xticklabels([f"In-AD (n={len(in_ad)})", f"Out-of-AD (n={len(out_ad)})"])
+            axes_ad[0, 1].set_ylabel("Adaptive interval width")
+            axes_ad[0, 1].set_title("In-AD vs Out-of-AD  (threshold=0.5)")
+            axes_ad[0, 1].grid(True, alpha=0.3, axis="y")
+            _tmp = pd.DataFrame({"AD_norm": ad_norm_c.values, "width": cp_w_c.values,
+                                "covered": covered_c.values})
+            _tmp["_bin"] = pd.qcut(ad_norm_c, q=n_quantile_bins, labels=False, duplicates="drop")
+            strat_rows = []
+            for b in sorted(_tmp["_bin"].dropna().unique()):
+                _m = _tmp["_bin"] == b
+                strat_rows.append({
+                    "AD bin": f"Q{int(b)+1} [{ad_norm_c[_m].min():.2f}-{ad_norm_c[_m].max():.2f}]",
+                    "n": int(_m.sum()),
+                    "Mean width": _tmp.loc[_m, "width"].mean(),
+                    "Coverage":   _tmp.loc[_m, "covered"].mean(),
+                })
+            strat_df = pd.DataFrame(strat_rows)
+            display(strat_df)
+            x = np.arange(len(strat_df))
+            axes_ad[1, 0].bar(x, strat_df["Mean width"], color="#3498db", alpha=0.8, edgecolor="black")
+            axes_ad[1, 0].set_xticks(x)
+            axes_ad[1, 0].set_xticklabels(strat_df["AD bin"], rotation=30, ha="right", fontsize=8)
+            axes_ad[1, 0].set_ylabel("Mean interval width"); axes_ad[1, 0].grid(True, alpha=0.3, axis="y")
+            axes_ad[1, 0].set_title("Mean width by AD quintile  (Q1=lowest AD, Q5=highest AD)")
+            ax2 = axes_ad[1, 0].twinx()
+            ax2.plot(x, strat_df["Coverage"], "rs-", lw=2, ms=8, label="Coverage")
+            ax2.axhline(1 - alpha, color="red", linestyle="--", lw=1.5, alpha=0.7,
+                        label=f"Target {1-alpha:.0%}")
+            ax2.set_ylim(0, 1.05); ax2.set_ylabel("Coverage"); ax2.legend(loc="upper left", fontsize=8)
+            axes_ad[1, 1].hist(in_ad.values,  bins="auto", density=True, alpha=0.5,
+                            color="#27ae60", label=f"In-AD (n={len(in_ad)})")
+            axes_ad[1, 1].hist(out_ad.values, bins="auto", density=True, alpha=0.5,
+                            color="#e74c3c", label=f"Out-of-AD (n={len(out_ad)})")
+            if len(in_ad):
+                axes_ad[1, 1].axvline(in_ad.mean(), color="#27ae60", lw=2, linestyle="--",
+                                    label=f"Mean in={in_ad.mean():.3f}")
+            if len(out_ad):
+                axes_ad[1, 1].axvline(out_ad.mean(), color="#e74c3c", lw=2, linestyle="--",
+                                    label=f"Mean out={out_ad.mean():.3f}")
+            axes_ad[1, 1].set_xlabel("Adaptive interval width"); axes_ad[1, 1].set_ylabel("Density")
+            axes_ad[1, 1].set_title("Width distribution: In-AD vs Out-of-AD")
+            axes_ad[1, 1].legend(fontsize=8); axes_ad[1, 1].grid(True, alpha=0.3)
+            if ad_dir == "similarity":
+                interpretation = "Negative rho = wider intervals outside AD"
+            else:
+                interpretation = "Positive rho = wider intervals outside AD"        
+            plt.suptitle(f"{dataset}: width vs {ad_col}  (rho={rho:.3f})\n {interpretation}", fontsize=10)
+            plt.tight_layout()
+            _plot_path = out_dir / f"ext_ad_{ad_col}.png"
+            fig_ad.savefig(_plot_path, dpi=150, bbox_inches="tight")
+            plt.show(); plt.close(fig_ad)
+            display(Markdown(f"- Plot: `{_plot_path}`"))
+            ad_results.append({
+                "dataset": dataset, "ad_col": ad_col, "direction": ad_dir,
+                "n": int(mask.sum()), "spearman_rho": round(rho, 4),
+                "p_value": round(pval, 6), "rho_CI_lo": round(rho_lo, 4),
+                "rho_CI_hi": round(rho_hi, 4),
+                "mean_width_in_AD":  round(float(in_ad.mean()),  4) if len(in_ad)  else None,
+                "mean_width_out_AD": round(float(out_ad.mean()), 4) if len(out_ad) else None,
+            })
+    return ad_results
+
+ad_results = compare_AD_width(df_test_ad)
+
+# ==============================================================================
+# S13  Save results
 # ==============================================================================
 result_df = pd.DataFrame({
     "Smiles": test_df["Smiles"].values, "True": y_test,
@@ -508,6 +722,7 @@ result_df = pd.DataFrame({
     "Upper_plain": upper_p, "Width_plain": width_p,
     "Covered_plain": covered_p.astype(int),
     "Sigma_pred": sigma_pred_test,
+    "Status" : "TEST"
 })
 metrics_df = pd.DataFrame([
     {"variant": "adaptive", "alpha": alpha, "coverage": covered_a.mean(),
@@ -521,8 +736,10 @@ with pd.ExcelWriter(product["data"], engine="xlsxwriter") as w:
     result_df.to_excel(w, sheet_name="Predictions", index=False)
     metrics_df.to_excel(w, sheet_name="Metrics",    index=False)
     pd.DataFrame(ncm_rows).to_excel(w, sheet_name="NCM_comparison", index=False)
+    if ad_results:
+        pd.DataFrame(ad_results).to_excel(w, sheet_name="AD_CP_correlations", index=False)    
 
-display(Markdown("## [OK] Regression tutorial (native) complete."))
+display(Markdown(f"## [OK] Regression tutorial ({base_model}) complete."))
 display(Markdown(f"- Results         : `{product['data']}`"))
 display(Markdown(f"- Model adaptive  : `{product['ncmodel_adaptive']}`"))
 display(Markdown(f"- Model plain     : `{product['ncmodel_plain']}`"))
