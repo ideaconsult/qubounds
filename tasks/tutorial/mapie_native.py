@@ -161,6 +161,7 @@ if base_model == "file":
     test_df = test_df.reset_index(drop=True)
     cal_df = cal_df.reset_index(drop=True)                
 else:   
+    df_test_ad = None
     _available_ad = [] 
     fit_df, cal_df = train_test_split(train_df, test_size=0.2, random_state=42)
     fit_df = fit_df.reset_index(drop=True)
