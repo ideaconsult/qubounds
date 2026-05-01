@@ -91,6 +91,10 @@ prob_col = meta.get("prob_col", None)
 
 # all classes  should be integer
 cfg  = dataset_config.get(dataset, {})
+ad_cols           = cfg.get("ad_cols",             [])
+ad_col_directions = cfg.get("ad_col_directions",   [])
+n_quantile_bins   = int(cfg.get("n_quantile_bins", 5))
+
 print(cfg.get("classes",{}))
 
 int_to_class = {int(k): v for k, v in cfg.get("classes",{}).items()}
@@ -369,6 +373,8 @@ if proba_cal is not None:
 else:
     covered_lac = None
     sizes_lac = None
+    n_cal = 0
+    q_hat_lac = None
 # ==============================================================================
 # S5  Approach B: NCM pseudo-probabilities (hard labels)
 # ==============================================================================
@@ -571,7 +577,15 @@ if proba_cal is not None and y_cal_hard is not None:
     plt.tight_layout()
     fig_sz.savefig(out_dir / "class_setsize_scatter.png", dpi=150, bbox_inches="tight")
     plt.show(); plt.close(fig_sz)
-
+else:
+    comparison_rows = [
+        {"Approach": "B: NCM pseudo-proba", "Coverage": f"{covered_ncm.mean():.3f}",
+        "Target": f">= {1-alpha:.2f}", "Mean set size": f"{sizes_ncm.mean():.3f}",
+        "Singleton %": f"{np.mean(sizes_ncm==1)*100:.1f}%",
+        "Full set %": f"{np.mean(sizes_ncm==n_classes)*100:.1f}%",
+        "q_hat": f"{q_hat_ncm}"},
+    ]
+    display(pd.DataFrame(comparison_rows))
 # ==============================================================================
 # S7  Prediction set visualisation: 12 example molecules
 # ==============================================================================
@@ -698,11 +712,15 @@ for col_idx, (label, noise_scale, color) in enumerate(_configs):
 
     ax_bot = axes_ncm_c[1, col_idx]
     ax_bot.hist(_scores, bins=20, density=True, alpha=0.65, color=color)
-    ax_bot.axvline(_q, color="red", lw=2, linestyle="--",
+    try:
+        ax_bot.axvline(_q, color="red", lw=2, linestyle="--",
                    label=f"q_hat={_q:.3f}  cov={_cov:.3f}  sz={_sz:.2f}")
+        ax_bot.set_title(f"Coverage={_cov:.3f}  Mean set size={_sz:.3f}")        
+    except Exception:
+        pass
     ax_bot.set_xlabel("LAC score on calibration")
     ax_bot.set_ylabel("Density")
-    ax_bot.set_title(f"Coverage={_cov:.3f}  Mean set size={_sz:.3f}")
+    
     ax_bot.legend(fontsize=7); ax_bot.grid(True, alpha=0.3)
 plt.suptitle(
     f"NCM quality vs CP outcome  (alpha={alpha}, target={1-alpha:.0%})\n"
@@ -820,11 +838,13 @@ res_sw = {"A_lac": {"cov": [], "sz": []}, "B_ncm": {"cov": [], "sz": []}}
 
 for a in alphas_sw:
     _ql = min(np.ceil((n_cal + 1) * (1 - a)) / n_cal, 1.0)
-
-    _q = np.quantile(scores_lac, _ql)
-    _s = (1.0 - proba_test) <= _q
-    res_sw["A_lac"]["cov"].append(_s[np.arange(len(y_test)), y_test].mean())
-    res_sw["A_lac"]["sz"].append(_s.sum(axis=1).mean())
+    try:
+        _q = np.quantile(scores_lac, _ql)
+        _s = (1.0 - proba_test) <= _q
+        res_sw["A_lac"]["cov"].append(_s[np.arange(len(y_test)), y_test].mean())
+        res_sw["A_lac"]["sz"].append(_s.sum(axis=1).mean())
+    except Exception:
+        pass
 
     _q = np.quantile(scores_ncm, _ql)
     _s = (1.0 - pseudo_proba_test) <= _q
@@ -835,8 +855,14 @@ fig_sw, (ax_sw1, ax_sw2) = plt.subplots(1, 2, figsize=(11, 4))
 for key, (style, color, lbl) in {
         "A_lac": ("o-", "#2196F3", "A: LAC"),
         "B_ncm": ("s--", "#FF9800", "B: NCM")}.items():
-    ax_sw1.plot(1 - alphas_sw, res_sw[key]["cov"], style, color=color, label=lbl)
-    ax_sw2.plot(1 - alphas_sw, res_sw[key]["sz"],  style, color=color, label=lbl)
+    try:
+        ax_sw1.plot(1 - alphas_sw, res_sw[key]["cov"], style, color=color, label=lbl)
+    except:
+        pass
+    try:
+        ax_sw2.plot(1 - alphas_sw, res_sw[key]["sz"],  style, color=color, label=lbl)
+    except:
+        pass
 ax_sw1.plot([0.5, 0.95], [0.5, 0.95], "k:", lw=1, label="y = 1-alpha (ideal)")
 ax_sw1.set_xlabel("Target coverage  (1 - alpha)")
 ax_sw1.set_ylabel("Empirical coverage")
@@ -863,23 +889,130 @@ for cls_int, cls_name in int_to_class.items():
         continue
     per_class_rows.append({
         "Class": cls_name, "n_test": int(mask.sum()),
-        "Cov_A": f"{covered_lac[mask].mean():.3f}",
+        "Cov_A": None if covered_lac is None else f"{covered_lac[mask].mean():.3f}",
         "Cov_B": f"{covered_ncm[mask].mean():.3f}",
-        "Sz_A":  f"{sizes_lac[mask].mean():.2f}",
+        "Sz_A":  None if sizes_lac is None else f"{sizes_lac[mask].mean():.2f}",
         "Sz_B":  f"{sizes_ncm[mask].mean():.2f}",
     })
 display(pd.DataFrame(per_class_rows))
 
+
 # ==============================================================================
-# S13  Save results
+# S13  AD comparison (only when ad_cols are available)
+# ==============================================================================
+display(Markdown("## S13  AD comparison: set size / singleton rate vs AD index"))
+
+ad_results = []
+if not _available_ad:
+    display(Markdown(
+        "### Skipped\n\nNo AD columns found in external file. To enable, add to "
+        f"`env.tutorial.yaml` under `{dataset}`:\n\n"
+        "```yaml\n  ad_cols: [\"ADI\"]\n  ad_col_directions: [\"similarity\"]\n```"))
+else:
+    display(Markdown(f"- AD columns: {_available_ad}"))
+    display(Markdown("""
+**Key question**: Do prediction set sizes correlate with AD metrics?
+
+Expected: larger sets (more uncertain) for out-of-AD molecules.
+Singleton rate should be higher for in-AD molecules.
+"""))
+    for ad_col, ad_dir in zip(_available_ad, ad_col_directions[:len(_available_ad)]):
+        display(Markdown(f"### {ad_col}  (direction: {ad_dir})"))
+        ad_raw = test_df[ad_col].astype(float)
+        ad_s   = pd.Series(ad_raw, index=test_df.index)
+        mask   = ad_s.notna()
+        ad_c   = ad_s[mask].reset_index(drop=True)
+        sz_c   = pd.Series(sizes_ncm)[mask].reset_index(drop=True)
+        sing_c = (sz_c == 1).astype(float)
+        rho_sz, p_sz   = spearmanr(ad_c.values, sz_c.values)
+        rho_sg, p_sg   = spearmanr(ad_c.values, sing_c.values)
+        expected = "negative" if ad_dir == "similarity" else "positive"
+        display(Markdown(f"- Set size Spearman rho={rho_sz:.3f}  p={p_sz:.4f}  (expected {expected})"))
+        display(Markdown(f"- Singleton rate Spearman rho={rho_sg:.3f}  p={p_sg:.4f}"))
+        threshold = 0.5
+        in_ad  = sz_c[ad_c >= threshold] if ad_dir == "similarity" else sz_c[ad_c <= threshold]
+        out_ad = sz_c[ad_c <  threshold] if ad_dir == "similarity" else sz_c[ad_c >  threshold]
+        fig_ad, axes_ad = plt.subplots(2, 2, figsize=(13, 10))
+        axes_ad[0, 0].scatter(ad_c, sz_c, alpha=0.25, s=8, color="#9C27B0", rasterized=True)
+        try:
+            z = np.polyfit(ad_c, sz_c, 1)
+            xr = np.linspace(ad_c.min(), ad_c.max(), 100)
+            axes_ad[0, 0].plot(xr, np.poly1d(z)(xr), "r-", lw=2, alpha=0.7, label="trend")
+        except Exception:
+            pass
+        axes_ad[0, 0].set_xlabel(f"{ad_col}"); axes_ad[0, 0].set_ylabel("Set size")
+        axes_ad[0, 0].set_title(f"Set size vs {ad_col}\nSpearman rho={rho_sz:.3f}  p={p_sz:.4f}  (expected {expected})", fontsize=9)
+        axes_ad[0, 0].legend(fontsize=7); axes_ad[0, 0].grid(True, alpha=0.3)
+        if len(in_ad) > 1 and len(out_ad) > 1:
+            bp = axes_ad[0, 1].boxplot([in_ad.values, out_ad.values], patch_artist=True,
+                                        widths=0.5, medianprops=dict(color="black", lw=2))
+            for patch, c_ in zip(bp["boxes"], ["#27ae60", "#e74c3c"]):
+                patch.set_facecolor(c_)
+            u_stat, u_p = mannwhitneyu(in_ad, out_ad, alternative="two-sided")
+            axes_ad[0, 1].text(0.98, 0.97, f"Mann-Whitney p={u_p:.4f}",
+                               transform=axes_ad[0, 1].transAxes, ha="right", va="top",
+                               fontsize=8, bbox=dict(boxstyle="round", fc="white", alpha=0.8))
+        axes_ad[0, 1].set_xticklabels([f"In-AD (n={len(in_ad)})", f"Out-of-AD (n={len(out_ad)})"])
+        axes_ad[0, 1].set_ylabel("Set size")
+        axes_ad[0, 1].set_title("Set size: In-AD vs Out-of-AD  (threshold=0.5)")
+        axes_ad[0, 1].grid(True, alpha=0.3, axis="y")
+        _tmp = pd.DataFrame({"AD": ad_c.values, "sz": sz_c.values, "singleton": sing_c.values})
+        _tmp["_bin"] = pd.qcut(ad_c, q=n_quantile_bins, labels=False, duplicates="drop")
+        strat_rows = []
+        for b in sorted(_tmp["_bin"].dropna().unique()):
+            _m = _tmp["_bin"] == b
+            strat_rows.append({
+                "AD bin":       f"Q{int(b)+1} [{ad_c[_m].min():.2f}-{ad_c[_m].max():.2f}]",
+                "n":            int(_m.sum()),
+                "Mean set size": _tmp.loc[_m, "sz"].mean(),
+                "Singleton %":  _tmp.loc[_m, "singleton"].mean() * 100,
+            })
+        strat_df = pd.DataFrame(strat_rows)
+        display(strat_df)
+        x = np.arange(len(strat_df))
+        axes_ad[1, 0].bar(x, strat_df["Mean set size"], color="#3498db", alpha=0.8, edgecolor="black")
+        axes_ad[1, 0].set_xticks(x)
+        axes_ad[1, 0].set_xticklabels(strat_df["AD bin"], rotation=30, ha="right", fontsize=8)
+        axes_ad[1, 0].set_ylabel("Mean set size"); axes_ad[1, 0].grid(True, alpha=0.3, axis="y")
+        axes_ad[1, 0].set_title("Mean set size by AD quintile")
+        ax2 = axes_ad[1, 0].twinx()
+        ax2.plot(x, strat_df["Singleton %"] / 100, "rs-", lw=2, ms=8, label="Singleton rate")
+        ax2.set_ylim(0, 1.05); ax2.set_ylabel("Singleton rate"); ax2.legend(loc="upper left", fontsize=8)
+        axes_ad[1, 1].scatter(ad_c, sing_c, alpha=0.25, s=8, color="#FF9800", rasterized=True)
+        try:
+            z2 = np.polyfit(ad_c, sing_c, 1)
+            axes_ad[1, 1].plot(xr, np.poly1d(z2)(xr), "r-", lw=2, alpha=0.7, label="trend")
+        except Exception:
+            pass
+        axes_ad[1, 1].set_xlabel(f"{ad_col}"); axes_ad[1, 1].set_ylabel("Singleton (1=yes)")
+        axes_ad[1, 1].set_title(f"Singleton rate vs {ad_col}\nSpearman rho={rho_sg:.3f}  p={p_sg:.4f}")
+        axes_ad[1, 1].legend(fontsize=7); axes_ad[1, 1].grid(True, alpha=0.3)
+        interp = "Negative rho = larger sets outside AD" if ad_dir == "similarity" \
+                 else "Positive rho = larger sets outside AD"
+        plt.suptitle(f"{dataset}: set size vs {ad_col}  (rho={rho_sz:.3f})\n{interp}", fontsize=10)
+        plt.tight_layout()
+        _plot_path = out_dir / f"ext_class_ad_{ad_col}.png"
+        fig_ad.savefig(_plot_path, dpi=150, bbox_inches="tight")
+        plt.show(); plt.close(fig_ad)
+        display(Markdown(f"- Plot: `{_plot_path}`"))
+        ad_results.append({
+            "dataset": dataset, "ad_col": ad_col, "direction": ad_dir,
+            "n": int(mask.sum()),
+            "spearman_rho_setsize":   round(rho_sz, 4), "p_value_setsize": round(p_sz, 6),
+            "spearman_rho_singleton": round(rho_sg, 4), "p_value_singleton": round(p_sg, 6),
+        })
+
+
+# ==============================================================================
+# S14  Save results
 # ==============================================================================
 result_df = pd.DataFrame({
     "Smiles": test_df["Smiles"].values,
     "True":   test_df[target_col].values,
     "Pred":   [int_to_class[p] for p in y_test_hard],
-    "Cov_A":  covered_lac.astype(int), "SetSize_A": sizes_lac,
+    "Cov_A":  None if covered_lac is None else covered_lac.astype(int), "SetSize_A": sizes_lac,
     "Cov_B":  covered_ncm.astype(int), "SetSize_B": sizes_ncm,
-    **{f"p_{c}":        proba_test[:, i]        for i, c in enumerate(classes_original)},
+    **{f"p_{c}":   None if proba_test is None else  proba_test[:, i]        for i, c in enumerate(classes_original)},
     **{f"pseudo_p_{c}": pseudo_proba_test[:, i] for i, c in enumerate(classes_original)},
 })
 
