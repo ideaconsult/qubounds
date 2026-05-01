@@ -123,6 +123,7 @@ display(Markdown(f"## Dataset : {dataset_key}  |  target: {target_col}  |  n={le
 
 if task == "classification":
     classes = {int(k): v for k, v in cfg.get("classes",{}).items()}    
+    class_to_int = {v: k for k, v in classes.items()}  # invert mapping
     as_num = pd.to_numeric(df[target_col], errors="coerce")
     ratio_numeric = as_num.notna().mean()
     if ratio_numeric == 1:  # numeric classes
@@ -131,6 +132,11 @@ if task == "classification":
         valid = set(classes.values())
     print( df[target_col].unique(), valid)
     df[target_col] = df[target_col].where(df[target_col].isin(valid), np.nan)
+    if hard_col in df.columns:
+        df[hard_col] = df[hard_col].where(df[hard_col].isin(valid), np.nan)
+    if ratio_numeric != 1:
+        df[target_col] = df[target_col].map(class_to_int)
+        df[hard_col] = df[hard_col].map(class_to_int)
     class_counts = df[target_col].value_counts(dropna=False)
     display(Markdown("- Class distribution:"))
     display(Markdown(class_counts.to_string()))   
@@ -196,7 +202,7 @@ meta = {
     "task": task
 }
 if task == "classification":
-    meta["classes"] =sorted(df[target_col].unique().tolist())
+    meta["classes"] = cfg.get("classes",{})
     meta["hard_col"] = hard_col
     meta["prob_col"] = prob_col    
 else:
