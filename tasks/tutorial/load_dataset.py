@@ -117,12 +117,19 @@ ad_col_directions = cfg.get("ad_col_directions",   [])
 n_quantile_bins   = int(cfg.get("n_quantile_bins", 5))
 
 df = _from_file(dataset["path"], cfg)
+df.shape
 
 display(Markdown(f"## Dataset : {dataset_key}  |  target: {target_col}  |  n={len(df)}"))
 
 if task == "classification":
-    classes = {int(k): v for k, v in cfg.get("classes",{}).items()}
-    valid = set(classes.values())
+    classes = {int(k): v for k, v in cfg.get("classes",{}).items()}    
+    as_num = pd.to_numeric(df[target_col], errors="coerce")
+    ratio_numeric = as_num.notna().mean()
+    if ratio_numeric == 1:  # numeric classes
+        valid = set(classes.keys())
+    else:    
+        valid = set(classes.values())
+    print( df[target_col].unique(), valid)
     df[target_col] = df[target_col].where(df[target_col].isin(valid), np.nan)
     class_counts = df[target_col].value_counts(dropna=False)
     display(Markdown("- Class distribution:"))

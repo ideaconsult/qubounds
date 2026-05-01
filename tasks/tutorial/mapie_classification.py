@@ -65,6 +65,7 @@ cache_path          = None
 product             = None
 upstream            = None
 dataset             = None
+dataset_config = None
 base_model = None
 # -
 
@@ -86,7 +87,12 @@ meta
 target_col = meta["target_col"]
 hard_col = meta.get("hard_col", None)
 prob_col = meta.get("prob_col", None)
-
+cfg  = dataset_config.get(dataset, {}) if isinstance(dataset, dict) else {}
+int_to_class = {int(k): v for k, v in cfg.get("classes",{}).items()}
+class_to_int = {v: k for k, v in int_to_class.items()}  # invert mapping
+classes_original = int_to_class.values()
+n_classes = len(classes_original)
+valid_classes = set(class_to_int.keys())
 
 if hard_col is None and prob_col is None and base_model == "file": 
    base_model = "catboost" 
@@ -150,6 +156,7 @@ train_df = pd.read_excel(data, sheet_name="Training")
 test_df  = pd.read_excel(data,  sheet_name="Test")
 train_df = train_df.dropna(subset=["Smiles", target_col]).reset_index(drop=True)
 test_df  = test_df.dropna(subset=["Smiles", target_col]).reset_index(drop=True)
+test_df.head()
 
 # check for nans
 for col_ in [target_col, hard_col, prob_col]:
@@ -157,14 +164,21 @@ for col_ in [target_col, hard_col, prob_col]:
         assert not train_df[col_].isna().any(), f"Train column {col_} contains NaNs"
         assert not test_df[col_].isna().any(), f"Test column {col_} contains NaNs"
 
-classes_original = np.sort(train_df[target_col].unique())
-class_to_int = {c: i for i, c in enumerate(classes_original)}
-int_to_class = {i: c for c, i in class_to_int.items()}
-n_classes = len(classes_original)
-
+# --- MAP to integers
 train_df["label"] = train_df[target_col].map(class_to_int)
 test_df["label"]  = test_df[target_col].map(class_to_int)
+test_df.head()
+
+# --- CLEAN (invalidate bad labels like "-")
+#train_df[target_col] = train_df[target_col].where(
+#    train_df[target_col].isin(valid_classes), np.nan
+#)
+#test_df[target_col] = test_df[target_col].where(
+#    test_df[target_col].isin(valid_classes), np.nan
+#)
+
 test_df = test_df.dropna(subset=["label"]).reset_index(drop=True)
+
 
 
 if base_model == "file": 
