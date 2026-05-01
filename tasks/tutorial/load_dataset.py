@@ -47,6 +47,8 @@ task = None
 
 def _from_file(path: str, cfg: dict = {}) -> pd.DataFrame:
     pred_col          = cfg.get("pred_col",None)
+    hard_col          = cfg.get("hard_col",None)    
+    proba_col          = cfg.get("proba_col",None)
     target_col          = cfg.get("target_col", None)
     smiles_col    = cfg.get("smiles_col","Smiles")
     split_col         = cfg.get("split_col",None)
@@ -68,6 +70,10 @@ def _from_file(path: str, cfg: dict = {}) -> pd.DataFrame:
     cols = ["Smiles", target_col]
     if pred_col in df.columns:
         cols.extend([pred_col])
+    if hard_col in df.columns:
+        cols.extend([hard_col])        
+    if proba_col in df.columns:
+        cols.extend([proba_col])        
     for ad_col in ad_cols:        
         cols.extend([ad_col])
     if split_col is not None and split_col in df.columns:
@@ -98,6 +104,8 @@ dataset = cfg
 dataset
 
 pred_col          = cfg.get("pred_col",None)
+hard_col          = cfg.get("hard_col",None)
+prob_col          = cfg.get("prob_col",None)
 target_col          = cfg.get("target_col", None)
 target_descr          = cfg.get("target_descr", target_col)
 smiles_col    = cfg.get("smiles_col","Smiles")
@@ -114,20 +122,22 @@ display(Markdown(f"## Dataset : {dataset_key}  |  target: {target_col}  |  n={le
 
 if task == "classification":
     classes = {int(k): v for k, v in cfg.get("classes",{}).items()}
-    try:
-        df[target_col] = df[target_col].astype(int).map(classes)
-    except Exception:
-        pass  
-    class_counts = df[target_col].value_counts()
+    valid = set(classes.values())
+    df[target_col] = df[target_col].where(df[target_col].isin(valid), np.nan)
+    class_counts = df[target_col].value_counts(dropna=False)
     display(Markdown("- Class distribution:"))
-    display(Markdown(class_counts.to_string()))    
+    display(Markdown(class_counts.to_string()))   
 
 print(df.columns)
 
 df.head()
 
-
-df = df.dropna(subset=["Smiles", target_col])
+subset=["Smiles", target_col]
+if hard_col in df.columns:
+    subset.append(hard_col)
+if prob_col in df.columns:
+    subset.append(prob_col)    
+df = df.dropna(subset=subset)
 df = df[df["Smiles"].astype(str).str.strip() != ""].reset_index(drop=True)
 
 # ── split ─────────────────────────────────────────────────────────────────────
@@ -150,10 +160,11 @@ if pred_col:
     model_json["results_name"] = [target_descr]
 # ── save ─────────────────────────────────────────────────────────────────────
 Path(product["data"]).parent.mkdir(parents=True, exist_ok=True)
+
 writeExcel_epa(
     product["data"],
     model_json,
-    pred_value=pred_col,
+    pred_value=pred_col if task == "regression" else hard_col,
     exp_value=target_col,
     df=df,
     adi_columns=ad_cols,
@@ -166,7 +177,6 @@ meta = {
     "dataset": dataset_key,
     "path": dataset["path"],
     "target_col": target_col,
-    "pred_col": pred_col,
     "split_col" : split_col,
     "split_train_value" : split_train_value,
     "split_test_value" : split_test_value,
@@ -180,6 +190,10 @@ meta = {
 }
 if task == "classification":
     meta["classes"] =sorted(df[target_col].unique().tolist())
+    meta["hard_col"] = hard_col
+    meta["prob_col"] = prob_col    
+else:
+    meta["pred_col"] = pred_col    
 with open(product["meta"], "w") as f:
     json.dump(meta, f, indent=2)
 
