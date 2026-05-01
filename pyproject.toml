@@ -21,7 +21,8 @@ dependencies = [
     "xlsxwriter (>=3.2.5,<4.0.0)",
     "mapie (>=1.2.0,<2.0.0)",
     "mord (>=0.7,<0.8)",
-    "lightgbm (>=4.6.0,<5.0.0)"
+    "lightgbm (>=4.6.0,<5.0.0)",
+    "catboost>=1.2.10",
 ]
 
 

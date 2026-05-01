@@ -15,7 +15,6 @@ tasks:
     params:
       test_size:      0.2
       random_state:   42
-      cache_path:     "{{TUTORIAL_CACHE}}"
       dataset_config: "{{tutorial_regr_datasets}}"
       task: "regression"
     grid:
@@ -34,7 +33,6 @@ tasks:
     params:
       test_size:      0.2
       random_state:   42
-      cache_path:     "{{TUTORIAL_CACHE}}"
       dataset_config: "{{tutorial_class_datasets}}"
       task: "classification"
     grid:
@@ -119,6 +117,25 @@ tasks:
       cache_path:     "{{TUTORIAL_CACHE}}"
       dataset_config: "{{tutorial_class_datasets}}"
       base_model: "lgbm"
+    grid:
+      dataset: "{{tutorial_class_datasets}}"
+      ncm:     "{{tutorial_class_ncm}}"
+    nbconvert_export_kwargs:
+      exclude_input: "{{report_exclude_code}}"
+
+
+  - source: tasks/tutorial/mapie_classification.py
+    name: "tutorial_classify_external_[[dataset]]_[[ncm]]"
+    upstream: ["tutorial_load_class_*"]
+    product:
+      nb:      "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/02_external_[[ncm]].{{report_format}}"
+      data:    "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/external_[[ncm]].xlsx"
+      ncmodel: "{{TUTORIAL_OUTPUT}}/classification/[[dataset]]/external_[[ncm]].pkl"
+    params:
+      alpha:          "{{tutorial_alpha}}"
+      cache_path:     "{{TUTORIAL_CACHE}}"
+      dataset_config: "{{tutorial_class_datasets}}"
+      base_model: "file"
     grid:
       dataset: "{{tutorial_class_datasets}}"
       ncm:     "{{tutorial_class_ncm}}"

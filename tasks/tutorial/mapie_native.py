@@ -48,9 +48,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from scipy.stats import ks_2samp, spearmanr, mannwhitneyu
 from lightgbm import LGBMRegressor
+from catboost import CatBoostRegressor
 from mapie.regression import SplitConformalRegressor
 from mapie.conformity_scores import ResidualNormalisedScore, AbsoluteConformityScore
-
 from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
 from qubounds.mapie_diagnostic import make_sigma_model, sigma_diagnostics, detect_residual_degeneracy
 from qubounds.mapie_regression import ExternalPredictor
@@ -76,6 +76,8 @@ with open(meta_path) as f:
     meta = json.load(f)
 target_col = meta["target_col"]
 pred_col = meta.get("pred_col", None)
+if pred_col is None and base_model == "file": 
+   base_model = "catboost" 
 ad_cols = meta.get("ad_cols", [])
 ad_col_directions = meta.get("ad_col_directions",[])
 n_quantile_bins = meta.get("n_quantile_bins", 5)
@@ -186,6 +188,12 @@ if base_model == "lgbm":
     y_fit_pred  = base_model_.predict(X_fit)
     y_cal_pred  = base_model_.predict(X_cal)
     y_test_pred = base_model_.predict(X_test)
+elif base_model == "catboost":
+    base_model_ = CatBoostRegressor(random_state=42)
+    base_model_.fit(X_fit, y_fit)
+    y_fit_pred  = base_model_.predict(X_fit)
+    y_cal_pred  = base_model_.predict(X_cal)
+    y_test_pred = base_model_.predict(X_test)    
 elif base_model == "file":
     y_fit_pred  = fit_df[pred_col].values.astype(float)
     y_cal_pred  = cal_df[pred_col].values.astype(float)
@@ -193,7 +201,9 @@ elif base_model == "file":
 else:
     assert False,f"{base_model} not supported"
 
-display(Markdown(f"- Base model R2 on cal set: {r2_score(y_cal, y_cal_pred):.3f}  (honest)"))
+display(Markdown(f"- Base model R2 on train set: {r2_score(y_fit, y_fit_pred):.3f}"))
+display(Markdown(f"- Base model R2 on cal set: {r2_score(y_cal, y_cal_pred):.3f}"))
+display(Markdown(f"- Base model R2 on test set: {r2_score(y_test, y_test_pred):.3f}"))
 
 # ==============================================================================
 # S4  Sigma model
@@ -547,15 +557,14 @@ for col_idx, (label, noise, color) in enumerate(_configs):
     _lim = max(_true_res_cal.max(), _sc.max()) * 1.05
     axes_ncm[0, col_idx].plot([0, _lim], [0, _lim], "k--", lw=1)
     axes_ncm[0, col_idx].set_xlabel("|y-y_hat| (true)"); axes_ncm[0, col_idx].set_ylabel("sigma_hat")
-    axes_ncm[0, col_idx].set_title(f"{label}\nR2={_r2:.2f}"); axes_ncm[0, col_idx].grid(True, alpha=0.3)
+    axes_ncm[0, col_idx].set_title(f"{label} R2={_r2:.2f}", fontsize=7); axes_ncm[0, col_idx].grid(True, alpha=0.3)
 
     axes_ncm[1, col_idx].hist(_ss, bins="auto", density=True, alpha=0.65, color=color)
     axes_ncm[1, col_idx].axvline(_q, color="red", lw=2, linestyle="--",
                                   label=f"q={_q:.2f}  cov={_cov:.3f}  W={_w:.3f}")
     axes_ncm[1, col_idx].set_xlabel("|y-y_hat|/sigma"); axes_ncm[1, col_idx].set_ylabel("Density")
-    axes_ncm[1, col_idx].set_title(f"cov={_cov:.3f}  W={_w:.3f}")
+    axes_ncm[1, col_idx].set_title(f"cov={_cov:.3f}  W={_w:.3f}", fontsize=7)
     axes_ncm[1, col_idx].legend(fontsize=7); axes_ncm[1, col_idx].grid(True, alpha=0.3)
-
 plt.suptitle(f"NCM quality vs CP outcome  (alpha={alpha})\n"
              "Coverage stable; efficiency improves with better NCM.", fontsize=10)
 plt.tight_layout()

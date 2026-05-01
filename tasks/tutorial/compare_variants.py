@@ -38,13 +38,13 @@ ncm        = None
 Path(product["data"]).parent.mkdir(parents=True, exist_ok=True)
 
 # ── resolve upstream paths ────────────────────────────────────────────────────
-tag_load    = f"tutorial_load_{dataset}"
+tag_load    = f"tutorial_load_regr_{dataset}"
 tag_native  = f"tutorial_native_{dataset}_{ncm}"
 tag_ext     = f"tutorial_external_{dataset}_{ncm}"
 dataset, tag_load,tag_native,tag_ext
 
 
-meta_path     = upstream["tutorial_load_*"][tag_load]["meta"]
+meta_path     = upstream["tutorial_load_regr_*"][tag_load]["meta"]
 native_data   = upstream["tutorial_native_*"][tag_native]["data"]
 external_data = upstream["tutorial_external_*"][tag_ext]["data"]
 meta_path
