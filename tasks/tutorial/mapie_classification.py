@@ -20,6 +20,7 @@ from qubounds.mapie_class_lac import (
     NCMProbabilisticClassifier,
     train_conformal_classifier_hard,
 )
+from scipy.stats import ks_2samp, spearmanr, mannwhitneyu
 
 # -*- coding: utf-8 -*-
 """
@@ -87,12 +88,18 @@ meta
 target_col = meta["target_col"]
 hard_col = meta.get("hard_col", None)
 prob_col = meta.get("prob_col", None)
-cfg  = dataset_config.get(dataset, {}) if isinstance(dataset, dict) else {}
+
+# all classes  should be integer
+cfg  = dataset_config.get(dataset, {})
+print(cfg.get("classes",{}))
+
 int_to_class = {int(k): v for k, v in cfg.get("classes",{}).items()}
+print(int_to_class)
 class_to_int = {v: k for k, v in int_to_class.items()}  # invert mapping
-classes_original = int_to_class.values()
+classes_original = list(int_to_class.values())
+print(classes_original)
 n_classes = len(classes_original)
-valid_classes = set(class_to_int.keys())
+valid_classes = set(int_to_class.keys())
 
 if hard_col is None and prob_col is None and base_model == "file": 
    base_model = "catboost" 
@@ -164,18 +171,16 @@ for col_ in [target_col, hard_col, prob_col]:
         assert not train_df[col_].isna().any(), f"Train column {col_} contains NaNs"
         assert not test_df[col_].isna().any(), f"Test column {col_} contains NaNs"
 
-# --- MAP to integers
-train_df["label"] = train_df[target_col].map(class_to_int)
-test_df["label"]  = test_df[target_col].map(class_to_int)
-test_df.head()
+train_df["label"] = train_df[target_col]
+test_df["label"]  = test_df[target_col]
 
-# --- CLEAN (invalidate bad labels like "-")
-#train_df[target_col] = train_df[target_col].where(
-#    train_df[target_col].isin(valid_classes), np.nan
-#)
-#test_df[target_col] = test_df[target_col].where(
-#    test_df[target_col].isin(valid_classes), np.nan
-#)
+#--- CLEAN (invalidate bad labels like "-")
+train_df[target_col] = train_df[target_col].where(
+    train_df[target_col].isin(valid_classes), np.nan
+)
+test_df[target_col] = test_df[target_col].where(
+    test_df[target_col].isin(valid_classes), np.nan
+)
 
 test_df = test_df.dropna(subset=["label"]).reset_index(drop=True)
 
@@ -211,7 +216,7 @@ else:
 display(Markdown(f"- Fit set        : {len(fit_df)} molecules"))
 display(Markdown(f"- Calibration set: {len(cal_df)} molecules"))
 display(Markdown(f"- Test set       : {len(test_df)} molecules"))
-display(Markdown(f"- Classes        : {classes_original.tolist()}"))
+display(Markdown(f"- Classes        : {classes_original}"))
 
 min_required = int(np.ceil(1 / alpha)) - 1
 class_counts_cal = cal_df["label"].value_counts().sort_index()
@@ -277,9 +282,9 @@ elif base_model == "file":
         proba_cal  = cal_df[prob_col].values
         proba_test = test_df[prob_col].values
     if hard_col is not None:
-        y_fit_hard  = fit_df[hard_col].map(class_to_int)
-        y_cal_hard  = cal_df[hard_col].map(class_to_int)
-        y_test_hard = test_df[hard_col].map(class_to_int)
+        y_fit_hard  = fit_df[hard_col].values # .map(class_to_int)
+        y_cal_hard  = cal_df[hard_col].values
+        y_test_hard = test_df[hard_col].values
 else:
     assert False,f"{base_model} not supported"
 
@@ -361,7 +366,9 @@ if proba_cal is not None:
     display(Markdown(f"- Coverage      : {covered_lac.mean():.3f}  (target >= {1-alpha:.2f})"))
     display(Markdown(f"- Mean set size : {sizes_lac.mean():.3f}"))
     display(Markdown(f"- Singleton %   : {np.mean(sizes_lac==1)*100:.1f}%"))
-
+else:
+    covered_lac = None
+    sizes_lac = None
 # ==============================================================================
 # S5  Approach B: NCM pseudo-probabilities (hard labels)
 # ==============================================================================
@@ -461,8 +468,9 @@ if y_cal_hard is not None:
         ax = axes_ex[k]
         x = np.arange(n_classes)
         w = 0.35
-        ax.bar(x - w/2, proba_cal[i],       width=w, color="#2196F3", alpha=0.8,
-            label="Real proba (model)")
+        if proba_cal is not None:
+            ax.bar(x - w/2, proba_cal[i],       width=w, color="#2196F3", alpha=0.8,
+                label="Real proba (model)")
         ax.bar(x + w/2, pseudo_proba_cal[i], width=w, color="#FF9800", alpha=0.8,
             label="Pseudo-proba (NCM)")
         ax.axvline(y_cal_hard[i], color="orange", lw=2, linestyle="--",
@@ -485,11 +493,14 @@ if y_cal_hard is not None:
 
     # LAC scores and prediction sets for Approach B
     scores_ncm = 1.0 - pseudo_proba_cal[np.arange(len(y_cal)), y_cal]
-    q_hat_ncm  = np.quantile(scores_ncm, q_level)
-    prob_threshold_ncm = 1 - q_hat_ncm
-
-    display(Markdown(f"- q_hat (NCM pseudo-proba): {q_hat_ncm:.4f}"))
-    display(Markdown(f"- Probability threshold   : {prob_threshold_ncm:.4f}"))
+    try:
+        q_hat_ncm  = np.quantile(scores_ncm, q_level)
+        prob_threshold_ncm = 1 - q_hat_ncm
+        display(Markdown(f"- q_hat (NCM pseudo-proba): {q_hat_ncm:.4f}"))
+        display(Markdown(f"- Probability threshold   : {prob_threshold_ncm:.4f}"))        
+    except Exception:
+        q_hat_ncm = None
+        prob_threshold_ncm = None
 
     ncm_estimator.y_pred = y_test_hard
     _, y_sets_ncm = mapie_ncm.predict_set(X_test)
@@ -523,7 +534,7 @@ if proba_cal is not None and y_cal_hard is not None:
         "Target": f">= {1-alpha:.2f}", "Mean set size": f"{sizes_ncm.mean():.3f}",
         "Singleton %": f"{np.mean(sizes_ncm==1)*100:.1f}%",
         "Full set %": f"{np.mean(sizes_ncm==n_classes)*100:.1f}%",
-        "q_hat": f"{q_hat_ncm:.4f}"},
+        "q_hat": f"{q_hat_ncm}"},
     ]
     display(pd.DataFrame(comparison_rows))
 
@@ -578,27 +589,30 @@ for k, i in enumerate(sample_idx):
     w = 0.35
     true_cls = y_test[i]
     y_hat_i  = int(y_test_hard[i])
-
-    ax.bar(x - w/2, proba_test[i],        width=w, color="#2196F3", alpha=0.8,
-           label="A: real proba")
+    if proba_test is not None:
+        ax.bar(x - w/2, proba_test[i],        width=w, color="#2196F3", alpha=0.8,
+               label="A: real proba")
+        ax.axhline(prob_threshold_lac, color="#2196F3", lw=1.5, linestyle="--", alpha=0.7,
+               label=f"A threshold={prob_threshold_lac:.2f}")        
+        ax.axhline(prob_threshold_ncm, color="#FF9800", lw=1.5, linestyle=":",  alpha=0.7,
+               label=f"B threshold={prob_threshold_ncm:.2f}")
+        
     ax.bar(x + w/2, pseudo_proba_test[i], width=w, color="#FF9800", alpha=0.8,
            label="B: NCM pseudo")
-
-    ax.axhline(prob_threshold_lac, color="#2196F3", lw=1.5, linestyle="--", alpha=0.7,
-               label=f"A threshold={prob_threshold_lac:.2f}")
-    ax.axhline(prob_threshold_ncm, color="#FF9800", lw=1.5, linestyle=":",  alpha=0.7,
-               label=f"B threshold={prob_threshold_ncm:.2f}")
     ax.axvspan(true_cls - 0.5, true_cls + 0.5, alpha=0.1, color="green")
 
     ax.set_xticks(x)
     ax.set_xticklabels([str(c) for c in classes_original], fontsize=7)
     ax.set_ylim(0, 1.05)
 
-    in_a = "OK" if covered_lac[i] else "X"
+    try:
+        in_a = "OK" if covered_lac[i] else "X"
+    except Exception:
+        in_a = None
     in_b = "OK" if covered_ncm[i] else "X"
     ax.set_title(
         f"True:{int_to_class[true_cls]}  Pred:{int_to_class[y_hat_i]}\n"
-        f"A:{in_a}(sz={int(sizes_lac[i])})  B:{in_b}(sz={int(sizes_ncm[i])})",
+        f"A:{in_a}(sz={None if sizes_lac is None else int(sizes_lac[i])})  B:{in_b}(sz={int(sizes_ncm[i])})",
         fontsize=7)
     ax.grid(True, alpha=0.2, axis="y")
     if k == 0:
@@ -661,14 +675,17 @@ for col_idx, (label, noise_scale, color) in enumerate(_configs):
     _pp_test = _d_to_proba(_nd_test, y_test_hard, n_classes)
 
     _scores = 1.0 - _pp_cal[np.arange(len(y_cal)), y_cal]
-    _q  = np.quantile(_scores, q_level)
-    _sets = (1.0 - _pp_test) <= _q
-    _cov = _sets[np.arange(len(y_test)), y_test].mean()
-    _sz  = _sets.sum(axis=1).mean()
+    try:
+        _q  = np.quantile(_scores, q_level)
+        _sets = (1.0 - _pp_test) <= _q
+        _cov = _sets[np.arange(len(y_test)), y_test].mean()
+        _sz  = _sets.sum(axis=1).mean()
 
-    ncm_c_results.append({"Model": label, "R2": round(_r2v, 3),
-                           "q_hat": round(_q, 4), "Coverage": round(_cov, 3),
-                           "Mean_set_size": round(_sz, 3)})
+        ncm_c_results.append({"Model": label, "R2": round(_r2v, 3),
+                            "q_hat": round(_q, 4), "Coverage": round(_cov, 3),
+                            "Mean_set_size": round(_sz, 3)})
+    except Exception:
+        pass
 
     ax_top = axes_ncm_c[0, col_idx]
     ax_top.scatter(_true_d_cal, _nd_cal, alpha=0.35, s=8, color=color)
@@ -719,26 +736,79 @@ KS p > 0.05 -> no evidence of distributional shift -> guarantee holds
 KS p < 0.05 -> possible shift -> coverage may deviate from the guarantee
 """))
 
-from scipy.stats import ks_2samp
-scores_test_ncm = 1.0 - pseudo_proba_test[np.arange(len(y_test)), y_test]
-ks_stat, ks_p = ks_2samp(scores_ncm, scores_test_ncm)
-display(Markdown(
-    f"- KS statistic = {ks_stat:.4f}  p = {ks_p:.4f}  "
-    f"({'OK' if ks_p > 0.05 else 'WARNING: possible shift'})"))
 
-fig_ks, ax_ks = plt.subplots(figsize=(6, 4))
-ax_ks.hist(scores_ncm,      bins="auto", density=True, alpha=0.5,
-           label="Calibration", color="#FF9800")
-ax_ks.hist(scores_test_ncm, bins="auto", density=True, alpha=0.5,
-           label="Test", color="#9C27B0")
-ax_ks.set_xlabel("LAC score  1 - p_pseudo(true class | x)")
-ax_ks.set_ylabel("Density")
-ax_ks.set_title(f"Exchangeability: cal vs test  (KS p={ks_p:.4f})")
-ax_ks.legend(fontsize=8); ax_ks.grid(True, alpha=0.3)
+# --- Nonconformity scores ---
+scores_cal = scores_ncm
+scores_test = 1.0 - pseudo_proba_test[np.arange(len(y_test)), y_test]
+
+# --- Conformal p-values (classification analogue) ---
+# fraction of calibration scores >= test score
+p_values = np.array([
+    np.mean(scores_cal >= s_i)
+    for s_i in scores_test
+])
+
+
+colors = {
+    "TRAINING": "#4CAF50",  
+    "CALIBRATION":  "#FF9800",
+    "TEST":   "#2196F3",   
+}
+
+# --- Organize comparisons ---
+scores = {
+    "CALIBRATION": scores_cal,
+    "TEST": scores_test,
+    "p-values TEST": p_values,
+    "uniform": "uniform"
+}
+
+pairs = [
+    ("CALIBRATION", "TEST"),
+    ("p-values TEST", "uniform")
+]
+
+ks_p = {}
+fig_ks, axes = plt.subplots(1, len(pairs), figsize=(12, 4))
+
+for ax, (k1, k2) in zip(axes, pairs):
+    s1, s2 = scores[k1], scores[k2]
+
+    if k2 == "uniform":
+        # compare p-values to U(0,1)
+        ks_stat, _ks_p = ks_2samp(s1, np.random.uniform(size=len(s1)))
+    else:
+        ks_stat, _ks_p = ks_2samp(s1, s2)
+
+    ks_p[f"{k1}_{k2}"] = _ks_p
+    msg = f"KS p={_ks_p:.4f} ({'OK' if _ks_p > 0.05 else 'WARNING: possible shift'})"
+
+    # --- Plot ---
+    ax.hist(s1, bins="auto", density=True, alpha=0.5,
+            label=k1, color=colors.get(k1, "gray"))
+
+    if k2 == "uniform":
+        ax.axhline(y=1, linestyle='--',
+                   color=colors.get(k2, "red"),
+                   label="uniform", linewidth=2)
+        ax.set_xlabel("p-values")
+    else:
+        ax.hist(s2, bins="auto", density=True, alpha=0.5,
+                label=k2, color=colors.get(k2, "red"))
+        ax.set_xlabel("Nonconformity score")
+
+    ax.set_title(f"{k1} vs {k2}\n{msg}")
+    ax.set_ylabel("Density")
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    display(Markdown(f"- [{k1} - {k2}] {msg}"))
+
 plt.tight_layout()
-fig_ks.savefig(out_dir / "ext_class_exchangeability_ks.png", dpi=150, bbox_inches="tight")
-plt.show(); plt.close(fig_ks)
-
+fig_ks.savefig(out_dir / "ext_class_exchangeability_ks.png",
+               dpi=150, bbox_inches="tight")
+plt.show()
+plt.close(fig_ks)
 
 # ==============================================================================
 # S11  Coverage guarantee sweep across alpha
