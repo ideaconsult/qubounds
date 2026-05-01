@@ -788,7 +788,6 @@ pairs = [
 
 ks_p = {}
 fig_ks, axes = plt.subplots(1, len(pairs), figsize=(12, 4))
-
 for ax, (k1, k2) in zip(axes, pairs):
     s1, s2 = scores[k1], scores[k2]
 
@@ -821,7 +820,6 @@ for ax, (k1, k2) in zip(axes, pairs):
     ax.grid(True, alpha=0.3)
 
     display(Markdown(f"- [{k1} - {k2}] {msg}"))
-
 plt.tight_layout()
 fig_ks.savefig(out_dir / "ext_class_exchangeability_ks.png",
                dpi=150, bbox_inches="tight")
