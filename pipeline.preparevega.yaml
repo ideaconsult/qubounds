@@ -1,0 +1,19 @@
+executor: parallel
+
+meta:
+    extract_upstream: False
+
+tasks:
+
+  - source: tasks/vega/conformal_prepare_vega_new.py
+    name: "conformal_preparev_files"
+    upstream: None
+    product: 
+      nb: "{{VEGA_QUBOUNDS_INPUT}}/vega/conformal_preparev_files.ipynb"
+      regression: "{{VEGA_QUBOUNDS_INPUT}}/vega/regression"
+      classification: "{{VEGA_QUBOUNDS_INPUT}}/vega/classification"
+    params:
+      vega_models: "resources/vega_models_withclasses.xlsx"
+      vega_exported_sets: "{{VEGA_TRAINING_SETS}}"
+      vega_reports: "{{VEGA_RESULT_FILES}}"
+      prefix: "report_"

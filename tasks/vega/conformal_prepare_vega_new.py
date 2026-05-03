@@ -1,14 +1,18 @@
 import pandas as pd
 import os.path
 from pathlib import Path
-from tasks.vega.utils_vega import load_vega_report, writeExcel_epa, get_adi_cols
+from qubounds.vega.utils_vega import load_vega_report, writeExcel_epa, get_adi_cols
 import re
+from sklearn.metrics import r2_score, root_mean_squared_error, accuracy_score
+
 
 # + tags=["parameters"]
 upstream = None
 product = None
-ts_files = None
-reports = None
+vega_models = None
+vega_exported_sets = None
+vega_reports = None
+prefix = "report_"
 # -
 
 
@@ -19,7 +23,6 @@ def take_first_predicted_col(model):
 
 # pay attention to exp columns when coming from test set or report - they are not encoded/encoded!
 def get_main_prediction_smthwrong(model, predicted_columns):
-    print("predicted_columns", predicted_columns)
     main_predicted_column = None
     main_unit = None
     main_index = None
@@ -41,54 +44,53 @@ def get_main_prediction_smthwrong(model, predicted_columns):
 
 
 def get_main_prediction(model, predicted_columns):
-    print("predicted_columns", predicted_columns)
     main_predicted_column = predicted_columns[0]
     match = re.search(r"\[(.*?)\]", main_predicted_column)
     main_unit = match.group(1) if match else None
     return main_predicted_column, main_unit, 0
 
 
-def prepare_regression(vega_list_models, folder_path):
-    for row in vega_list_models.itertuples(index=True):  # index=False to exclude index
-        if not row.has_report:
-            continue
+def prepare_reports(vega_list_models,  vega_exported_sets, vega_reports, product):
+    for row in vega_list_models.itertuples(index=True):
+        #if not row.has_report:
+        #    continue
         model = row.Key
-        ts_file = os.path.join(folder_path, row.TS_txt)
-        model_type = row.Type  # regr/class
-        df, metadata = load_vega_report(os.path.join(folder_path, row.report))
+        classValues = row.ClassValues
+        if row.ClassValues == "{}":
+            model_type = "regression" 
+            inverse_classes = None
+        else:
+            s = classValues.strip("{}")
+            items = re.split(r',\s*(?=-?\d+\.?\d*=)', s)
+            classes = {
+                float(k.strip()): v.strip()
+                for item in items
+                for k, v in [item.split("=", 1)]
+            }
+            inverse_classes = {v: k for k, v in classes.items()}
+            model_type = "classification"
+        
+        file_report = os.path.join(vega_reports, f"{prefix}{model}.txt")
+        if not Path(file_report).exists():
+            continue
+        df, metadata = load_vega_report(file_report)
         df.columns = ['ID' if col.lower() == 'id' else col for col in df.columns]
         df = df[~df['SMILES'].astype(str).str.strip().str.upper().isin(
             ['SMILES', 'SMILES STRUCTURE', 'SMILES VEGA', 'VEGA SMILES',
              'SMI VEGA', 'MDL SMILES STRUCTURE', 'NEUTRALIZED (Kekulized)_VEGA SMILES'])]
         df.columns = ['Smiles' if col.lower() == 'smiles' else col for col in df.columns]
 
-        df_ts = pd.read_csv(ts_file, sep="\t")
-        df_ts.columns = [col.strip() for col in df_ts.columns]
-        replace_with_id = {'id', 'id algae noec', 'id algae ec50', 'no.', 
-                           'mol_id', 'id fish lc50', 'no'}
-        df_ts.columns = [
-            "ID" if col.lower() in replace_with_id else col
-            for col in df_ts.columns
-        ]
-        replace_with_status = {
-            "set", "status", "split algae ec50", "split algae noec", "dataset", 
-            "set orig. coral", "split fish lc50", "label", "class"
-        }
-        # Normalize column names by lowercasing and replacing if matched
-        df_ts.columns = [
-            "Status" if col.lower() in replace_with_status else col
-            for col in df_ts.columns
-        ]
-        df_ts.columns = ['CAS' if col.lower() == 'cas' else col for col in df_ts.columns]
-        print(model, df_ts.columns)
-        print("df.columns", df.columns)
+        # datasets exported using https://github.com/ideaconsult/quarkus-vega-cli/tree/main/vega-wrapper-app --export-dataset option
+        # it has Status indicating Training/Test - this is not available in the reports produced by vega
+        # Id	CAS	SMILES	Status	Experimental value 	Predicted value 
+        df_ts = pd.read_csv(os.path.join(vega_exported_sets, f"{model}.txt"), sep="\t")
+        df_ts.rename(columns={"Id" : "ID"}, inplace=True)
 
         df_ts['Status'] = df_ts['Status'].astype(str).str.upper()
         df = df[df["ID"].str.isdigit()].copy()
         df['ID'] = df['ID'].astype(str)
         df_ts['ID'] = df_ts['ID'].astype(str)
         assert df.shape[0] == df_ts.shape[0], '%s != %s' % (df.shape[0], df_ts.shape[0])
-        print("All columns", df_ts.columns)
         start_idx = df.columns.get_loc('Assessment') + 1  # +1 to exclude 'Assessment'
         # end_idx = df.columns.get_loc('Experimental')      # Exclusive of 'Experimental'
         end_idx = next(
@@ -99,7 +101,6 @@ def prepare_regression(vega_list_models, folder_path):
         main_column, main_unit, main_index = get_main_prediction(model, predicted_columns)
 
         experimental_column = df.columns[end_idx]
-        print("Experimental: ", experimental_column)
         if main_index > 0:
             assert experimental_column.startswith("Experimental")
             match = re.search(r"\[(.*?)\]", experimental_column)
@@ -120,7 +121,58 @@ def prepare_regression(vega_list_models, folder_path):
         merged = pd.merge(df, df_ts[["ID", "Status", "CAS", last_col]], on='ID', how='left')
         #merged = pd.merge(df, df_ts[["ID", "Status", "CAS"]], on='ID', how='left')
 
-        print(model, merged.columns)
+        stats = {}
+        if model_type == "classification":
+            stats = {}
+            for split in ["TRAINING", "TEST"]:
+                mask = merged['Status'] == split
+                if mask.any():
+                    try:
+                        accuracy = accuracy_score(
+                            merged[main_column],
+                            merged[last_col]
+                        )
+                        stats[f"Accuracy_{split}"] = accuracy
+                        if accuracy < .5:
+                            print(stats)
+                    except Exception:
+                        pass
+        else:
+             for split in ["TRAINING", "TEST"]:
+                mask = merged['Status'] == split
+                if not mask.any():
+                    continue
+                try:
+                    df_sub = merged.loc[mask, [main_column, last_col]].copy()
+
+                    # force numeric (invalid parsing -> NaN)
+                    df_sub[main_column] = pd.to_numeric(df_sub[main_column], errors='coerce')
+                    df_sub[last_col] = pd.to_numeric(df_sub[last_col], errors='coerce')
+                    df_sub = df_sub.dropna()
+
+                    if len(df_sub) == 0:
+                        stats[f"R2_{split}"] = None
+                        stats[f"RMSE_{split}"] = None
+                        continue
+                    r2 = r2_score(
+                        df_sub.loc[mask, main_column],
+                        df_sub.loc[mask, last_col]
+                    )
+                    rmse = root_mean_squared_error(
+                        df_sub[main_column],
+                        df_sub[last_col]
+                    )                        
+                    stats[f"R2_{split}"] = r2
+                    stats[f"RMSE_{split}"] = rmse
+                    if r2 < .5:
+                        print(model, split, main_column, last_col, stats)
+                except Exception as x:
+                    print(x)
+                    stats[f"R2_{split}"] = None
+        # for compatibility with the pipeline we previously had this as encoded value 
+        if inverse_classes is not None:
+            df_ts[last_col] = df_ts[last_col].map(inverse_classes)
+
         model_json = { 
             "results_name": predicted_columns,
             "info": { "key": model,
@@ -128,6 +180,7 @@ def prepare_regression(vega_list_models, folder_path):
                     "version": row.Version,
                     "units": main_unit,
                     "Experimental" : last_col,
+                    "Stats": stats
                     }, 
             "training_dataset": []}
         _col_d = "Descriptors range check"
@@ -146,18 +199,16 @@ def prepare_regression(vega_list_models, folder_path):
             exp_value=last_col,
             df=merged,
             adi_columns=get_adi_cols(),
-            software="VEGA_NEW"
+            software="VEGA_NEW", extra_sheet=False,
+            keep_empty=True
                          )
 
 
 Path(product["regression"]).mkdir(parents=True, exist_ok=True)
 Path(product["classification"]).mkdir(parents=True, exist_ok=True)
 
-vega_list_models = pd.read_excel(upstream["vega_list_models"]["data"])
-print(vega_list_models.shape)
-#_tmp = vega_list_models.loc[vega_list_models["Key"] == "FISH_KNN"]
-#_tmp
+vega_list_models = pd.read_excel(vega_models)
 
-prepare_regression(vega_list_models, folder_path=Path(reports))
-#prepare_regression(_tmp, folder_path=Path(reports))
+prepare_reports(vega_list_models, vega_exported_sets, vega_reports, product)
+
 

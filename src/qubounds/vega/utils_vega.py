@@ -8,10 +8,11 @@ import plotly.express as px
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import chardet
 import ast
-from qubounds.assessment.thresholds import Thresholds
 import re
 import logging
 import numpy as np
+import glob 
+import xml.etree.ElementTree as ET
 
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,6 @@ def load_vega_models(file_vega_models, model):
 
 
 def load_vega_report(file):
-    print("load_vega_report")
     with open(file, 'rb') as f:
         raw_data = f.read()
         result = chardet.detect(raw_data)
@@ -357,7 +357,8 @@ def get_props():
 
 def writeExcel_epa(output_file, model_json, 
                    pred_value="PredictedValue", exp_value="ExperimentalValue",
-                   df=None, adi_columns=None, software="VEGA", extra_sheet=True):
+                   df=None, adi_columns=None, software="VEGA", extra_sheet=True,
+                   keep_empty=False):
     key = model_json.get("info",{}).get("key", None)
     name = model_json.get("info",{}).get("name", None)
     version = model_json.get("info",{}).get("version", None)
@@ -369,7 +370,7 @@ def writeExcel_epa(output_file, model_json,
     if "Status" in df.columns:
         training_df = df.loc[df["Status"] == "TRAINING"]
         test_df = df.loc[df["Status"] == "TEST"]
-        if test_df.empty:
+        if test_df.empty and not keep_empty:
             test_df = training_df
     else:
         training_df = df
@@ -401,19 +402,18 @@ def writeExcel_epa(output_file, model_json,
                             columns=cover_df.columns)
     cover_df = pd.concat([cover_df, new_rows], ignore_index=True)
 
-
     summary = []
     summary.append({"Split": "Training",
-                    "R2": stats.get("R2_Train", None),
-                    "RMSE": stats.get("RMSE_Train", None),
-                    "Accuracy": stats.get("Accuracy_Train", None),
+                    "R2": stats.get("R2_Train", stats.get("R2_TRAINING", None)),
+                    "RMSE": stats.get("RMSE_Train", stats.get("RMSE_TRAINING", None)),
+                    "Accuracy": stats.get("Accuracy_Train", stats.get("Accuracy_TRAINING", None)),
                     "Sensitivity": stats.get("Sensitivity_Train", None),
                     "Specificity": stats.get("Specificity_Train", None),
                     })
     summary.append({"Split": "Test", 
-                    "R2": stats.get("R2_Test", None),
-                    "RMSE": stats.get("RMSE_Test", None),
-                    "Accuracy": stats.get("Accuracy_Train", None),
+                    "R2": stats.get("R2_Test", stats.get("R2_TEST", None)),
+                    "RMSE": stats.get("RMSE_Test", stats.get("RMSE_TEST", None)),
+                    "Accuracy": stats.get("Accuracy_Test", stats.get("Accuracy_TEST", None)),
                     "Sensitivity": stats.get("Sensitivity_Test", None),
                     "Specificity": stats.get("Specificity_Train", None),
                     }
@@ -439,7 +439,6 @@ def writeExcel_epa(output_file, model_json,
                     for col in adi_columns:
                         if col in test_df.columns:
                             cols.append(col)
-                    print(cols)
                 df = test_df[cols].rename(columns={
                     pred_value: key,
                     exp_value: "Exp"
@@ -619,5 +618,6 @@ def map_class_to_probability_label(class_values, labels, patterns=FIXED_PATTERNS
             raise KeyError(f"No label found for class value: {cls}")
 
     return class_to_label
+
 
 
