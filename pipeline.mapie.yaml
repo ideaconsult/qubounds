@@ -95,7 +95,7 @@ tasks:
       method_score: "LAC"      
     grid:
       #ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
-      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "cmlpecfp","gbecfp", "rfecfp", "knn2jecfp"]
+      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "gbecfp", "rfecfp"]
       # "crfecfp", "cknn2jecfp","rfecfp",, "knn2jecfp"]  
       #data: ["ALGAE_COMBASECLASS", "AROM_IRMFN", "AROM_TOX21", "BEE_KNN", "CARC_ANTARES"]
       data: "{{vega_class}}"

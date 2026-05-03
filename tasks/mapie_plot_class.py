@@ -1,11 +1,11 @@
 import pandas as pd
 from pathlib import Path
 import numpy as np
-from tasks.assessment.utils import init_logging
+from qubounds.assessment.utils import init_logging
 import matplotlib.pyplot as plt
 from IPython.display import display, Markdown, HTML
 from scipy import stats
-from tasks.mapie_diagnostic import (
+from qubounds.mapie_diagnostic import (
     plot_coverage_efficiency_classification,
     figure_spearman_classification,
     distance_by_adi_bins_classification,

@@ -1,8 +1,8 @@
 import pandas as pd
 from pathlib import Path
 import numpy as np
-from tasks.assessment.utils import init_logging
-from tasks.mapie_diagnostic import (
+from qubounds.assessment.utils import init_logging
+from qubounds.mapie_diagnostic import (
     plot_prediction_intervals,
     plot_interval_width_histogram,
     plot_prediction_intervals_index,

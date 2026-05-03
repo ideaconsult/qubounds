@@ -4,11 +4,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
-from tasks.assessment.utils import init_logging
-from tasks.vega.property_vector import (
+from qubounds.assessment.utils import init_logging
+from qubounds.vega.property_vector import (
     compute_quantile_bins
 )
-from tasks.mapie_diagnostic import mark_outlier
+from qubounds.mapie_diagnostic import mark_outlier
 import pickle
 from scipy import stats
 import matplotlib.pyplot as plt

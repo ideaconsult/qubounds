@@ -1,6 +1,6 @@
 import pandas as pd
 import pickle
-from tasks.assessment.utils import init_logging
+from qubounds.assessment.utils import init_logging
 from pathlib import Path
 import traceback
 

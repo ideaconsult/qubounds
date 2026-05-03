@@ -1,14 +1,14 @@
 import os.path
 import numpy as np
 import pandas as pd
-from tasks.descriptors.ecfp import init_cache
-from tasks.mapie_regression import predict_conformal, clean_regrdataset
-from tasks.mapie_class_lac import predict_conformal_classifier_chunked
-from tasks.vega.utils_vega import (
+from qubounds.descriptors.ecfp import init_cache
+from qubounds.mapie_regression import predict_conformal, clean_regrdataset
+from qubounds.mapie_class_lac import predict_conformal_classifier_chunked
+from qubounds.vega.utils_vega import (
     load_vega_report, replace_labels_with_keys,
     writeExcel_epa, get_adi_cols, clean_vega_report_df, 
     get_main_prediction, clean_classdataset, get_class_values)
-from tasks.assessment.utils import init_logging
+from qubounds.assessment.utils import init_logging
 import traceback
 import time
 from pathlib import Path

@@ -4,7 +4,7 @@ import numpy as np
 from scipy import stats
 import os.path
 from pathlib import Path
-from tasks.assessment.utils import init_logging
+from qubounds.assessment.utils import init_logging
 
 
 # + tags=["parameters"]

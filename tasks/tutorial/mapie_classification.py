@@ -27,6 +27,28 @@ from scipy.stats import ks_2samp, spearmanr, mannwhitneyu
 tasks/tutorial/mapie_classification.py
 ----------------------------------------
 Tutorial: Conformal Prediction for QSAR - Classification
+
+Table of Contents
+-----------------
+- [S0  Resolve upstream](#S0--Resolve-upstream)
+- [S1  Formal definitions](#S1--Formal-definitions)
+- [S2  Data splits and class balance](#S2--Data-splits-and-class-balance)
+- [S3  Fingerprints and base classifier](#S3--Fingerprints-and-base-classifier)
+- [S4  Approach A: LAC with real model probabilities](#S4--Approach-A-LAC-with-real-model-probabilities)
+- [S5  Approach B: NCM pseudo-probabilities (hard labels)](#S5--Approach-B-NCM-pseudo-probabilities-hard-labels)
+- [S6  Head-to-head comparison: A vs B](#S6--Head-to-head-comparison-A-vs-B)
+- [S7  Prediction set visualisation: 12 example molecules](#S7--Prediction-set-visualisation-12-example-molecules)
+- [S8  NCM quality vs coverage and efficiency](#S8--NCM-quality-vs-coverage-and-efficiency)
+- [S9  Exchangeability check (KS test)](#S9--Exchangeability-check-KS-test)
+- [S10  Coverage guarantee sweep across alpha](#S10--Coverage-guarantee-sweep-across-alpha)
+- [S11  Per-class coverage](#S11--Per-class-coverage)
+- [S12  AD comparison (only when ad_cols are available)](#S12--AD-comparison-only-when-ad_cols-are-available)
+"""
+
+"""
+tasks/tutorial/mapie_classification.py
+----------------------------------------
+Tutorial: Conformal Prediction for QSAR - Classification
 =========================================================
 
 Two CP approaches are demonstrated and compared:

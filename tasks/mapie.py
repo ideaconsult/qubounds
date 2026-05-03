@@ -1,15 +1,15 @@
 import os.path
 import numpy as np
 import pandas as pd
-from tasks.descriptors.ecfp import init_cache
-from tasks.mapie_regression import (
+from qubounds.descriptors.ecfp import init_cache
+from qubounds.mapie_regression import (
     train_conformal_regression, predict_conformal, clean_regrdataset
 )
-from tasks.assessment.utils import init_logging
+from qubounds.assessment.utils import init_logging
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 import traceback
-from tasks.mapie_diagnostic import (
+from qubounds.mapie_diagnostic import (
     plot_interval_width_histogram
 )
 

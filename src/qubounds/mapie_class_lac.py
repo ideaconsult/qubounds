@@ -5,8 +5,8 @@ import pandas as pd
 from sklearn.base import ClassifierMixin
 from mapie.classification import SplitConformalClassifier
 from mapie.conformity_scores import LACConformityScore, APSConformityScore
-from tasks.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
-from tasks.mapie_diagnostic import (
+from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+from qubounds.mapie_diagnostic import (
     sigma_diagnostics, make_sigma_model,
     plot_normalized_ordinal_distances,
     plot_ncm_diagnostics, compute_ordinal_sigma

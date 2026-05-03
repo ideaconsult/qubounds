@@ -8,9 +8,9 @@ from scipy.stats import spearmanr
 import warnings
 import pickle
 from pathlib import Path
-from tasks.assessment.utils import init_logging
+from qubounds.assessment.utils import init_logging
 from tasks.interval_scaler import IntervalScaler
-from tasks.mapie_diagnostic import (
+from qubounds.mapie_diagnostic import (
     ADI_BIN_EDGES, ADI_BIN_LABELS
 )
 

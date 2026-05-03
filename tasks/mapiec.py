@@ -1,18 +1,19 @@
 import os.path
 import numpy as np
 import pandas as pd
-from tasks.descriptors.ecfp import init_cache
-from tasks.mapie_class_lac import (
+from qubounds.descriptors.ecfp import init_cache
+from qubounds.mapie_class_lac import (
     train_conformal_classifier, predict_conformal_classifier_chunked)
 from tasks.mapie_class_proba import (
     predict_conformal_classifier_proba
 )
-from tasks.vega.utils_vega import (
+from qubounds.vega.utils_vega import (
     get_class_values, clean_classdataset, map_class_to_probability_label)
-from tasks.assessment.utils import init_logging
+from qubounds.assessment.utils import init_logging
 from pathlib import Path
-from tasks.mapie_diagnostic import plot_conformal_diagnostics
+from qubounds.mapie_diagnostic import plot_conformal_diagnostics
 import pickle
+from sklearn.model_selection import train_test_split
 
 
 # + tags=["parameters"]
@@ -48,9 +49,23 @@ else:
     predicted_tag = meta.loc[meta[0] == "Property Name", 1].values[0]         
 
     # Load calibration data
-    df_calibration = pd.read_excel(input_file, sheet_name="Test")
+
     test_df = pd.read_excel(input_file, sheet_name="Test")
     df_train = pd.read_excel(input_file, sheet_name="Training")
+    # same as regression
+    if test_df.empty:
+        n = df_train.shape[0]        
+        ratio = 0.2
+        if n * 0.2 < 10:
+            df_train, df_calibration = train_test_split(df_train, test_size=10/n, random_state=42)
+            test_df = df_calibration 
+            calibration_set = "test"
+        else:    
+            df_train, df_calibration = train_test_split(df_train, test_size=ratio, random_state=42)
+            df_train, test_df = train_test_split(df_train, test_size=0.2, random_state=42)
+            calibration_set = "train_split_into_3"
+    else:
+        df_calibration, test_df = train_test_split(test_df, test_size=.2, random_state=42)
 
     if method_score.endswith("_proba"):
         test_df, _ = clean_classdataset(test_df, predicted_tag)

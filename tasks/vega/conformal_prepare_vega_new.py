@@ -171,7 +171,7 @@ def prepare_reports(vega_list_models,  vega_exported_sets, vega_reports, product
                     stats[f"R2_{split}"] = None
         # for compatibility with the pipeline we previously had this as encoded value 
         if inverse_classes is not None:
-            df_ts[last_col] = df_ts[last_col].map(inverse_classes)
+            merged[last_col] = merged[last_col].map(inverse_classes)
 
         model_json = { 
             "results_name": predicted_columns,
