@@ -268,7 +268,12 @@ def predict_conformal(df, pred_column, true_column=None,
         # this is now only for comparison,  to be switched later
         # we have fixed estimator taking values from the file
         mapie.estimator_.y_pred = y_pred_chunk        
-        y_pred, y_pis = mapie.predict_interval(X_ecfp_chunk)
+        try: 
+            y_pred, y_pis = mapie.predict_interval(X_ecfp_chunk)
+        except ValueError as err:
+            # ValueError: Number of samples of the score is too low,
+            logger.error(err)
+            break
         
         # DIAGNOSTICS
         # Compute reference conformity scores S = |y - y_hat| / sigma_hat
@@ -327,6 +332,14 @@ def predict_conformal(df, pred_column, true_column=None,
         
         results_chunks.append(pd.DataFrame(chunk_result))
     
+    if len(results_chunks) == 0:
+        model_metrics = {
+            "ncm": ncm, 
+            "ncm_descriptors": "ECFP",
+            "n_samples": len(df),
+            "n_chunks": num_chunks            
+        }
+        return None, model_metrics, saved
     # Concatenate all chunks
     results_df = pd.concat(results_chunks, ignore_index=True)
     

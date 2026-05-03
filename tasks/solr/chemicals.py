@@ -8,6 +8,7 @@ config = None
 cache_path = None
 product = None
 input_key = None
+enabled = False
 # -
 
 
@@ -71,7 +72,8 @@ def excel_folder_to_json(
 
 df_chem_path = config[input_key]["SMILES_INPUT"]
 
-excel_folder_to_json(df_chem_path)
+if enabled:
+    excel_folder_to_json(df_chem_path)
 
 #with open(product["json"], "w", encoding="utf-8") as f:
 #    json.dump(cleaned_items, f)
