@@ -44,22 +44,24 @@ else:
     test_df = pd.read_excel(input_file, sheet_name="Test")
     test_df = clean_regrdataset(test_df, model=predicted_tag_test)
 
+    train_df = pd.read_excel(input_file, sheet_name="Training")
+
     calibration_set = "test"
 
-    if data in ["LOGP_MEYLAN", "LOGP_ALOGP", "LOGP_MLOGP", "LD50_KNN",
+    if test_df.empty or data in ["LOGP_MEYLAN", "LOGP_ALOGP", "LOGP_MLOGP", "LD50_KNN",
                 "BCF_ARNOTGOBAS", "BCF_KNN", "FATHEAD_KNN", "FISH_KNN", "GUPPY_KNN",
                 "KOA_OPERA", "KOC_OPERA", "SLUDGE_COMBASEEC50", "TOTALHL_QSARINS"]:
         # we don't have a test set here !
         experimental_tag = experimental_tag_test
         predicted_tag = predicted_tag_test
-        n = df_calibration.shape[0]
+        n = train_df.shape[0]
         ratio = 0.2
         if n * 0.2 < 10:
-            train_df, df_calibration = train_test_split(df_calibration, test_size=10/n, random_state=42)
+            train_df, df_calibration = train_test_split(train_df, test_size=10/n, random_state=42)
             test_df = df_calibration 
             calibration_set = "test"
         else:    
-            train_df, df_calibration = train_test_split(df_calibration, test_size=ratio, random_state=42)
+            train_df, df_calibration = train_test_split(train_df, test_size=ratio, random_state=42)
             train_df, test_df = train_test_split(train_df, test_size=0.2, random_state=42)
             calibration_set = "train_split_into_3"
         train_df["residuals"] = np.abs(train_df[experimental_tag].astype(float) - train_df[predicted_tag].astype(float))
