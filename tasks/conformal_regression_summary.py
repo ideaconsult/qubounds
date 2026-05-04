@@ -14,6 +14,7 @@ from scipy import stats
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from IPython.display import display, Markdown, HTML
+import traceback 
 
 
 # + tags=["parameters"]
@@ -492,7 +493,11 @@ for key_star in upstream:
         df["Endpoint"] = _key
 
         method_name = df["Method Name"].unique()[0]
-        df_pi = pd.read_excel(file_path, sheet_name="Training PI")
+        try:
+            df_pi = pd.read_excel(file_path, sheet_name="Training PI")
+        except Exception as err:
+            traceback.print_exc()
+            continue
         vals = df_pi[f"{method_name}_true"].values
         df_pi = pd.read_excel(file_path, sheet_name="Prediction Intervals")
         vals = np.concatenate([vals, df_pi[f"{method_name}_true"].values])
