@@ -45,6 +45,7 @@ else:
     test_df = clean_regrdataset(test_df, model=predicted_tag_test)
 
     train_df = pd.read_excel(input_file, sheet_name="Training")
+    train_df = clean_regrdataset(train_df,  model=predicted_tag_test)
 
     calibration_set = "test"
 
