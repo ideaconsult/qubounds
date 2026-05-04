@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from IPython.display import display, Markdown, HTML
 from scipy.stats import spearmanr
+import traceback
 
 
 # + tags=["parameters"]
@@ -186,7 +187,12 @@ for key_star in upstream:
         min = meta["Min"].iloc[0]
         units = meta["Property Units"].iloc[0]
         name = meta["Property Name"].iloc[0]
-        df_train = pd.read_excel(file_path, sheet_name="Training PI")
+        try:
+            df_train = pd.read_excel(file_path, sheet_name="Training PI")
+        except Exception as err:
+            # EW_TOXICITY
+            traceback.print_exc()
+            continue
         df_train["Relative Interval Width"] = (df_train[f"{_data}_upper"] - df_train[f"{_data}_lower"])/(max-min)
         df_train['covered'] = (df_train[f"{_data}_true"] >= df_train[f"{_data}_lower"]) & (df_train[f'{_data}_true'] <= df_train[f"{_data}_upper"])
 
