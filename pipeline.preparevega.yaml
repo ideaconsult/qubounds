@@ -17,3 +17,4 @@ tasks:
       vega_exported_sets: "{{VEGA_TRAINING_SETS}}"
       vega_reports: "{{VEGA_RESULT_FILES}}"
       prefix: "report_"
+      dataset: ["BEE_KNN"]

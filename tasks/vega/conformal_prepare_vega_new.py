@@ -13,6 +13,7 @@ vega_models = None
 vega_exported_sets = None
 vega_reports = None
 prefix = "report_"
+dataset = None
 # -
 
 
@@ -55,6 +56,8 @@ def prepare_reports(vega_list_models,  vega_exported_sets, vega_reports, product
         #if not row.has_report:
         #    continue
         model = row.Key
+        if dataset is not None and model not in dataset:
+            continue
         classValues = row.ClassValues
         if row.ClassValues == "{}":
             model_type = "regression" 
@@ -171,6 +174,8 @@ def prepare_reports(vega_list_models,  vega_exported_sets, vega_reports, product
                     stats[f"R2_{split}"] = None
         # for compatibility with the pipeline we previously had this as encoded value 
         if inverse_classes is not None:
+            print(inverse_classes)
+            print(merged[last_col].unique())
             merged[last_col] = merged[last_col].map(inverse_classes)
 
         model_json = { 
