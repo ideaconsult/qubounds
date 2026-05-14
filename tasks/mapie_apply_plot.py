@@ -1339,10 +1339,164 @@ def plot_model_comparison_regression(aggregator: 'ConformalAggregator', save_pat
     plt.close()
 
 
+from textwrap import shorten
+
+def plot_global_analysis_classification(aggregator: 'ConformalAggregator', save_path: str):
+    """
+    Global summary for classification conformal prediction.
+
+    Layout (2 x 2):
+      A (top-left)   : Mean singleton rate by ADI bin (bar chart)
+      B (top-right)  : Sample count by ADI bin
+      C (bottom-left): Stacked bar — set-size composition per ADI bin
+                       (singleton / size=2 / size>=3)
+                       Uses StreamingStats means stored per-bin.
+      D (bottom-right): CP robustness scatter (ADI centre vs mean singleton rate)
+    """
+    fig = plt.figure(figsize=(14, 10))
+    gs = fig.add_gridspec(2, 2, hspace=0.38, wspace=0.32)
+
+    mean_metric = aggregator.global_adi.get_mean_metric()   # mean singleton-rate (%)
+    std_metric  = aggregator.global_adi.get_std_metric()
+    adi_bin_centers = [0.25, 0.625, 0.8, 0.925]
+
+    means = [mean_metric[k] for k in ADI_LABELS]
+    stds  = [std_metric[k]  for k in ADI_LABELS]
+    counts = [aggregator.global_adi.counts[k] for k in ADI_LABELS]
+    x_pos = np.arange(len(ADI_LABELS))
+
+    # ------------------------------------------------------------------
+    # A: Mean singleton rate (%) by ADI bin
+    # ------------------------------------------------------------------
+    ax1 = fig.add_subplot(gs[0, 0])
+    # Use standard error rather than raw std (Bernoulli, so std ≈ 50 always)
+    se = [s / np.sqrt(max(c, 1)) for s, c in zip(stds, counts)]
+    ax1.bar(x_pos, means, yerr=se, capsize=5,
+            alpha=0.7, color='steelblue', edgecolor='navy')
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels(
+        [shorten(lbl.split('(')[0].strip(), width=12, placeholder='…')
+        for lbl in ADI_LABELS],
+        rotation=0,
+        ha='center'
+    )
+    ax1.set_ylabel('Mean Singleton Rate (%)', fontsize=11, fontweight='bold')
+    ax1.set_title('A: Singleton rate % vs Applicability Domain\n(error bars = standard error)', fontsize=11, fontweight='bold')
+    ax1.set_ylim(0, 115)
+    ax1.grid(axis='y', alpha=0.3, linestyle='--')
+    for i, (m, s) in enumerate(zip(means, se)):
+        ax1.text(i, m + s + 2, f'{m:.1f}%', ha='center', va='bottom', fontsize=9)
+
+    # ------------------------------------------------------------------
+    # B: Sample count by ADI bin
+    # ------------------------------------------------------------------
+    ax2 = fig.add_subplot(gs[0, 1])
+    bars = ax2.bar(x_pos, counts, alpha=0.7, color='coral', edgecolor='darkred')
+    ax2.set_xticks(x_pos)
+    ax2.set_xticklabels(ADI_LABELS, rotation=0, ha='right')
+    ax2.set_ylabel('Number of Predictions', fontsize=11, fontweight='bold')
+    ax2.set_title('B: Sample Distribution by ADI', fontsize=12, fontweight='bold')
+    ax2.grid(axis='y', alpha=0.3, linestyle='--')
+    for bar, cnt in zip(bars, counts):
+        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                 f'{cnt:,}', ha='center', va='bottom', fontsize=9)
+
+    # ------------------------------------------------------------------
+    # C: Stacked bar — set-size composition per ADI bin
+    # The aggregator stores mean singleton-rate (%) as 'metric'.
+    # We also store means for size=0 and size>=2 via extra BinnedAggregators
+    # if available; otherwise we approximate from the singleton-rate mean:
+    #   singleton   = mean_metric / 100
+    #   non-singleton = 1 - singleton  (we cannot distinguish size=2 vs >=3 here)
+    # ------------------------------------------------------------------
+    ax3 = fig.add_subplot(gs[1, 0])
+
+    singleton_frac  = np.array([mean_metric[k] / 100.0 for k in ADI_LABELS])
+    other_frac      = 1.0 - singleton_frac
+
+    # Check if extended size stats are available
+    has_size_breakdown = hasattr(aggregator, 'global_adi_size2') and \
+                         hasattr(aggregator, 'global_adi_size3plus')
+
+    if has_size_breakdown:
+        size2_mean    = aggregator.global_adi_size2.get_mean_metric()
+        size3p_mean   = aggregator.global_adi_size3plus.get_mean_metric()
+        frac_size2    = np.array([size2_mean[k] / 100.0   for k in ADI_LABELS])
+        frac_size3p   = np.array([size3p_mean[k] / 100.0  for k in ADI_LABELS])
+        frac_empty    = np.clip(1.0 - singleton_frac - frac_size2 - frac_size3p, 0, 1)
+
+        ax3.bar(x_pos, singleton_frac * 100, label='Singleton (size=1)',
+                color='#2E7D32', alpha=0.85, edgecolor='black')
+        ax3.bar(x_pos, frac_size2 * 100, bottom=singleton_frac * 100,
+                label='Size = 2', color='#FF9800', alpha=0.85, edgecolor='black')
+        bottom2 = (singleton_frac + frac_size2) * 100
+        ax3.bar(x_pos, frac_size3p * 100, bottom=bottom2,
+                label='Size ≥ 3', color='#D32F2F', alpha=0.85, edgecolor='black')
+        bottom3 = bottom2 + frac_size3p * 100
+        ax3.bar(x_pos, frac_empty * 100, bottom=bottom3,
+                label='Empty set', color='#9E9E9E', alpha=0.85, edgecolor='black')
+    else:
+        # Fallback: singleton vs non-singleton only
+        ax3.bar(x_pos, singleton_frac * 100, label='Singleton (size=1)',
+                color='#2E7D32', alpha=0.85, edgecolor='black')
+        ax3.bar(x_pos, other_frac * 100, bottom=singleton_frac * 100,
+                label='Non-singleton (size≥2 or empty)', color='#D32F2F',
+                alpha=0.85, edgecolor='black')
+
+    ax3.set_xticks(x_pos)
+    ax3.set_xticklabels(ADI_LABELS, rotation=0, ha='right')
+    ax3.set_ylabel('Fraction of Predictions (%)', fontsize=11, fontweight='bold')
+    ax3.set_title('C: Set-Size Composition by ADI Bin', fontsize=12, fontweight='bold')
+    ax3.set_ylim(0, 105)
+    ax3.legend(loc='lower right', fontsize=9)
+    ax3.grid(axis='y', alpha=0.3, linestyle='--')
+    # Label singleton % on bars
+    for i, f in enumerate(singleton_frac):
+        ax3.text(i, f * 100 / 2, f'{f*100:.1f}%',
+                 ha='center', va='center', fontsize=9,
+                 color='white', fontweight='bold')
+
+    # ------------------------------------------------------------------
+    # D: CP robustness — ADI bin centre vs mean singleton rate
+    # ------------------------------------------------------------------
+    ax4 = fig.add_subplot(gs[1, 1])
+    sizes_scatter = [c / 1000 for c in counts]
+    ax4.scatter(adi_bin_centers, means, s=sizes_scatter,
+                alpha=0.6, c='steelblue', edgecolors='navy')
+    z = np.polyfit(adi_bin_centers, means, 1)
+    p_poly = np.poly1d(z)
+    x_trend = np.linspace(0, 1, 100)
+    ax4.plot(x_trend, p_poly(x_trend), 'r--', alpha=0.8, linewidth=2,
+             label=f'Trend: y={z[0]:.3f}x+{z[1]:.3f}')
+
+    from scipy.stats import spearmanr as _spearmanr
+    rho, pval = _spearmanr(means, adi_bin_centers)
+    interpretation = '✓ Good' if rho > 0.3 else ('○ Weak' if rho > 0 else '⚠ Unexpected')
+
+    ax4.tick_params(axis='x', labelrotation=0)
+    ax4.set_xlabel('ADI (Applicability Domain Index)', fontsize=11, fontweight='bold')
+    ax4.set_ylabel('Mean Singleton Rate (%)', fontsize=11, fontweight='bold')
+    ax4.set_title(f'D: CP Robustness Check ({interpretation})\n'
+                  f'Spearman ρ = {rho:.3f} (p={pval:.4f})',
+                  fontsize=12, fontweight='bold')
+    ax4.legend(loc='best', fontsize=9)
+    ax4.grid(alpha=0.3, linestyle='--')
+    ax4.set_xlim([0, 1])
+
+    fig.suptitle(
+        f'Conformal Prediction Analysis – Global Summary (Classification)\n'
+        f'({aggregator.total_chemicals:,} predictions across {len(aggregator.model_names)} models)',
+        fontsize=14, fontweight='bold', y=0.998)
+
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    logger.info(f'Global analysis (classification) saved to: {save_path}')
+    plt.close()
+
 # Dispatcher wrappers (keep old call sites working)
 def plot_global_analysis(aggregator, save_path):
     if aggregator.is_classification:
-        plot_classification_summary(aggregator, save_path)
+        #plot_classification_summary(aggregator, save_path)
+        plot_global_analysis_classification(aggregator, save_path)
     else:
         plot_global_analysis_regression(aggregator, save_path)
 
