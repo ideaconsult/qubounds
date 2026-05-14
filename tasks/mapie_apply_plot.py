@@ -960,7 +960,7 @@ def plot_classification_summary(aggregator: 'ConformalAggregator',
     fig = plt.figure(figsize=(18, 10 + max(0, (n_models - 20) * 0.18)))
     gs = fig.add_gridspec(
         2, 2,
-        height_ratios=[1.0, max(1.8, n_models * 0.14)],
+        height_ratios=[2.0, max(1.8, n_models * 0.14)],
         hspace=0.38, wspace=0.28
     )
 
@@ -970,12 +970,12 @@ def plot_classification_summary(aggregator: 'ConformalAggregator',
     size_colors = [cmap_spectral(i / max(n_sizes - 1, 1)) for i in range(n_sizes)]
 
     # ================================================================== #
-    # PANEL 1a — Certainty Gradient (top-left)                            #
+    # PANEL 1a — Singleton rate Gradient (top-left)                            #
     #   Stacked bar: set-size composition per ADI bin                     #
     #   + singleton rate grey line overlay (right y-axis, hidden ticks)   #
     # ================================================================== #
     ax1 = fig.add_subplot(gs[0, 0])
-
+    
     x_pos = np.arange(len(ADI_LABELS))
     bar_w = 0.6
     bottoms = np.zeros(len(ADI_LABELS))
@@ -1000,7 +1000,9 @@ def plot_classification_summary(aggregator: 'ConformalAggregator',
         n = total_by_bin[lbl]
         ax1r.text(xi, v + 4, f'{v:.0f}%\nN={n:,}',
                   ha='center', fontsize=8, fontweight='bold', color='black')
-    ax1r.legend(loc='upper left', fontsize=8)
+    ax1r.legend(loc='upper left',
+                bbox_to_anchor=(1, 0.1),
+                 fontsize=8)
 
     ax1.set_xticks(x_pos)
     ax1.set_xticklabels(ADI_LABELS, fontsize=9)
@@ -1008,20 +1010,23 @@ def plot_classification_summary(aggregator: 'ConformalAggregator',
     ax1.set_ylim(0, 105)
     interp = '\u2713 Good' if rho_global > 0.3 else ('\u25cb Weak' if rho_global > 0 else '\u26a0 Unexpected')
     ax1.set_title(
-        f'Certainty Gradient: Set-Size by ADI\n'
-        f'(Spearman \u03c1 = {rho_global:.2f}, {interp})',
+        f'Conformal prediction efficiency: Set-Size by ADI\n'
+        f'Singleton rate vs ADI (Spearman \u03c1 = {rho_global:.2f}, {interp})',
         fontsize=11, fontweight='bold'
     )
     ax1.grid(axis='y', alpha=0.25, linestyle='--')
     handles1, labels1 = ax1.get_legend_handles_labels()
     ax1.legend(handles1, labels1, title='Set size',
                fontsize=7, title_fontsize=8,
-               loc='lower right', ncol=2, framealpha=0.85)
+                loc='center left',
+                bbox_to_anchor=(1, 0.5),
+               ncol=1, framealpha=0.85)
 
     # ================================================================== #
     # PANEL 1b — Sample Distribution by ADI (top-right)                   #
     #   Coral bar chart with count labels — same style as previous        #
     # ================================================================== #
+
     ax1b = fig.add_subplot(gs[0, 1])
 
     counts_adi = [total_by_bin[lbl] for lbl in ADI_LABELS]
