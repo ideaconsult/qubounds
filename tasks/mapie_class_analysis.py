@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os.path
+from scipy import stats
 
 
 # + tags=["parameters"]
@@ -571,6 +572,235 @@ def print_ncm_summary_stats(df):
     print("=" * 70)
 
 
+def plot_classification_ncm_comparison(df, output_path=None, efficiency='Singleton Efficiency'):
+    """
+    Create comprehensive 2x2 grid comparing NCM models for classification.
+    
+    Parameters
+    ----------
+    df : DataFrame
+        Classification results with columns: ncm, Empirical Coverage, 
+        Singleton Efficiency, sigma_r2, Split
+    output_path : str, optional
+        Path to save figure
+    
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    """
+    
+    # Filter to test set
+    df_test = df[df['Split'] == 'Test'].copy()
+    
+    # Aggregate by NCM
+    ncm_stats = df_test.groupby('ncm').agg({
+        'Empirical Coverage': ['mean', 'std'],
+        efficiency: ['mean', 'std'],
+        'sigma_r2': ['mean', 'std']
+    }).reset_index()
+    
+    # Flatten columns
+    ncm_stats.columns = ['ncm', 'coverage_mean', 'coverage_std', 
+                         'singleton_mean', 'singleton_std',
+                         'r2_mean', 'r2_std']
+    
+    # Sort by efficiency score
+    ncm_stats['efficiency'] = ncm_stats['singleton_mean'] # / (ncm_stats['coverage_mean'] + 0.01)
+    ncm_stats = ncm_stats.sort_values('efficiency', ascending=False)
+    
+    # Create figure
+    fig = plt.figure(figsize=(16, 12))
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+    
+    # ========================================
+    # Plot 1: Bar Chart - Mean Performance
+    # ========================================
+    ax1 = fig.add_subplot(gs[0, 0])
+    
+    # Sort by singleton rate (efficiency)
+    ncm_sorted = ncm_stats.sort_values('singleton_mean', ascending=False)
+    
+    # Colors: highlight best
+    colors = ['#27ae60' if i == 0 else '#95a5a6' 
+              for i in range(len(ncm_sorted))]
+    
+    bars = ax1.barh(ncm_sorted['ncm'], ncm_sorted['singleton_mean'], 
+                     color=colors, edgecolor='black', linewidth=1.5)
+    
+    # Add values
+    """
+    for i, (idx, row) in enumerate(ncm_sorted.iterrows()):
+        ax1.text(row['singleton_mean'] + 0.01, i, 
+                f"{row['singleton_mean']:.3f}", 
+                va='center', fontsize=10, fontweight='bold',
+                clip_on=True)
+                """    
+    ax1.set_xlabel('Singleton Efficiency', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Auxiliary Model', fontsize=12, fontweight='bold')
+    ax1.set_title('A) Singleton Efficiency\n(Higher = Better)', 
+                 fontsize=14, fontweight='bold')
+    ax1.grid(axis='x', alpha=0.3)
+    ax1.invert_yaxis()
+    
+    # ========================================
+    # Plot 2: Coverage vs Width Scatter
+    # ========================================
+    ax2 = fig.add_subplot(gs[0, 1])
+    
+    # Scatter plot
+    best_ncm = ncm_sorted.iloc[0]['ncm']
+    colors_scatter = ['#27ae60' if ncm == best_ncm else '#3498db' 
+                     for ncm in ncm_stats['ncm']]
+    
+    scatter = ax2.scatter(ncm_stats['singleton_mean'], 
+                         ncm_stats['coverage_mean'],
+                         s=200, c=colors_scatter, 
+                         edgecolors='black', linewidth=2, 
+                         alpha=0.7, zorder=3)
+    
+    # Error bars
+    ax2.errorbar(ncm_stats['singleton_mean'], ncm_stats['coverage_mean'],
+                xerr=ncm_stats['singleton_std'], yerr=ncm_stats['coverage_std'],
+                fmt='none', ecolor='gray', alpha=0.4, zorder=1)
+    
+    # Annotate NCM names
+    for idx, row in ncm_stats.iterrows():
+        offset = 0.01 if row['ncm'] != best_ncm else 0.015
+        fontweight = 'bold' if row['ncm'] == best_ncm else 'normal'
+        ax2.annotate(row['ncm'], 
+                    xy=(row['singleton_mean'], row['coverage_mean']),
+                    xytext=(5, 5), textcoords='offset points',
+                    fontsize=9, fontweight=fontweight,
+                    bbox=dict(boxstyle='round,pad=0.3', 
+                            facecolor='yellow' if row['ncm'] == best_ncm else 'white',
+                            alpha=0.8, edgecolor='black'))
+    
+    # Target lines
+    ax2.axhline(0.90, color='red', linestyle='--', linewidth=2, 
+               label='Target Coverage (90%)', alpha=0.7, zorder=2)
+    ax2.axhspan(0.88, .95, alpha=0.1, color='green', zorder=0)
+    
+    # Ideal region annotation
+    ax2.text(0.75, 0.95, 'Ideal Region → \n(High Singleton rate +\n High Coverage)',
+            transform=ax2.transAxes, fontsize=10, 
+            verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.3))
+    
+    ax2.set_xlabel('Singleton Efficiency', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Mean Empirical Coverage', fontsize=12, fontweight='bold')
+    ax2.set_title('B) Efficiency-Coverage Tradeoff', fontsize=14, fontweight='bold')
+    ax2.legend(loc='lower right', fontsize=10)
+    ax2.grid(True, alpha=0.3)
+    ax2.set_ylim(0.80, 1.01)
+    
+    # ========================================
+    # Plot 3: NCM Quality (R²) vs Width
+    # ========================================
+    ax3 = fig.add_subplot(gs[1, 0])
+    
+    # Scatter
+    scatter3 = ax3.scatter(ncm_stats['r2_mean'], 
+                          ncm_stats['singleton_mean'],
+                          s=200, c=colors_scatter,
+                          edgecolors='black', linewidth=2,
+                          alpha=0.7)
+    
+    # Error bars
+    ax3.errorbar(ncm_stats['r2_mean'], ncm_stats['singleton_mean'],
+                xerr=ncm_stats['r2_std'], yerr=ncm_stats['singleton_std'],
+                fmt='none', ecolor='gray', alpha=0.4)
+    
+    # Trendline
+    if len(ncm_stats) > 2:
+        z = np.polyfit(ncm_stats['r2_mean'], ncm_stats['singleton_mean'], 1)
+        p = np.poly1d(z)
+        x_trend = np.linspace(ncm_stats['r2_mean'].min(), 
+                             ncm_stats['r2_mean'].max(), 100)
+        ax3.plot(x_trend, p(x_trend), 'r--', linewidth=2, 
+                alpha=0.5, label='Trend')
+        
+        # Correlation
+        r, p_val = stats.pearsonr(ncm_stats['r2_mean'], ncm_stats['singleton_mean'])
+        ax3.text(0.05, 0.95, f'r = {r:.3f}\np = {p_val:.4f}',
+                transform=ax3.transAxes, fontsize=11,
+                verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Annotate
+    for idx, row in ncm_stats.iterrows():
+        fontweight = 'bold' if row['ncm'] == best_ncm else 'normal'
+        ax3.annotate(row['ncm'],
+                    xy=(row['r2_mean'], row['singleton_mean']),
+                    xytext=(5, 5), textcoords='offset points',
+                    fontsize=9, fontweight=fontweight)
+    
+    ax3.set_xlabel('Auxiliary Model Quality (R²)', fontsize=12, fontweight='bold')
+    ax3.set_ylabel('Mean Singleton Efficiency', fontsize=12, fontweight='bold')
+    ax3.set_title('C) Does Better Auxiliary model → Higher Singleton Rate?', 
+                 fontsize=14, fontweight='bold')
+    ax3.legend(loc='best', fontsize=10)
+    ax3.grid(True, alpha=0.3)
+    
+    # ========================================
+    # Plot 4: Box Plots - Distribution Comparison
+    # ========================================
+    ax4 = fig.add_subplot(gs[1, 1])
+    
+    # Select top 5 NCMs by efficiency
+    top_5_ncms = ncm_sorted.head(5)['ncm'].tolist()
+
+    df_top5 = df[df['Split'] == 'Test'][df['ncm'].isin(top_5_ncms)]
+    #df_top5 = df_test[df_test['ncm'].isin(top_5_ncms)]
+
+    print(df_top5[["ncm", efficiency]])
+    
+    # Create box plot
+    positions = np.arange(len(top_5_ncms))
+    bp = ax4.boxplot([df_top5[df_top5['ncm'] == ncm][efficiency].values
+                      for ncm in top_5_ncms],
+                     positions=positions,
+                     widths=0.6,
+                     patch_artist=True,
+                     medianprops=dict(color='black', linewidth=2),
+                     boxprops=dict(edgecolor='black', linewidth=1.5),
+                     whiskerprops=dict(color='black', linewidth=1.5),
+                     capprops=dict(color='black', linewidth=1.5),
+                     flierprops=dict(marker='o', markerfacecolor='red', 
+                                   markersize=6, alpha=0.5))
+    
+    # Color boxes
+    for i, (patch, ncm) in enumerate(zip(bp['boxes'], top_5_ncms)):
+        if ncm == best_ncm:
+            patch.set_facecolor('#27ae60')
+        else:
+            patch.set_facecolor('#95a5a6')
+    
+    # Add median annotations
+    for i, ncm in enumerate(top_5_ncms):
+        data = df_top5[df_top5['ncm'] == ncm][efficiency]
+        median = data.median()
+        ax4.text(i, median - 0.02, f'{median:.3f}',
+                ha='center', fontsize=9, fontweight='bold')
+    
+    ax4.set_xticks(positions)
+    ax4.set_xticklabels(top_5_ncms, rotation=45, ha='right')
+    ax4.set_ylabel(efficiency, fontsize=12, fontweight='bold')
+    ax4.set_title('D) Singleton rate  (Top 5 NCMs)', 
+                 fontsize=14, fontweight='bold')
+    ax4.grid(axis='y', alpha=0.3)
+    
+    # Overall title
+    fig.suptitle('Classification Auxiliary Model Comparison', 
+                fontsize=16, fontweight='bold', y=0.995)
+    
+    plt.tight_layout()
+    
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to {output_path}")
+    
+    return fig
+
 df = None
 for tag in upstream:
     path_class = upstream[tag]["data"]
@@ -585,6 +815,8 @@ for tag in upstream:
 print(df["ncm"].unique())
 # Create plots
 #Test
+
+fig1 = plot_classification_ncm_comparison(df, output_path=os.path.join(product["data"],'ncm_comparison_classification.png'))
 fig1 = plot_ncm_coverage_comparison(df, output_path=os.path.join(product["data"],'ncm_comparison_calibration.png'), split_col="Split")
 fig1 = plot_ncm_coverage_vs_sigma(df, output_path=os.path.join(product["data"],'ncm_comparison_sigma.png'), split_col="Split")
 
