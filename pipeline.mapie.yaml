@@ -56,7 +56,8 @@ tasks:
       data: "{{vega_class}}"
       data_: ["BCF_MEYLAN"]
     grid:
-      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "cmlpecfp","gbecfp", "rfecfp", "knn2jecfp"]
+      ncm: ["crfecfp", "cgbecfp", "cknn2jecfp", "gbecfp", "rfecfp"]
+      
       #ncm: ["cgbecfp","crfecfp", "gbecfp", "rfecfp",  "knn2jecfp", "cknn2jecfp"]
 
 
@@ -217,7 +218,7 @@ tasks:
       #data: ["BCF_MEYLAN", "LOGP_MEYLAN","MELTING_POINT","MELTING_POINT_KNN","WS_IRFMN","ALGAE_COMBASEEC50"]
       data: "{{vega_class}}"
       input_key: "{{input_key}}"
-      ncm_code: ["crfecfp"]        
+      ncm_code: ["cgbecfp"]        
 
 
   - source: tasks/mapie_apply_plot.py
@@ -229,7 +230,7 @@ tasks:
       results: "{{VEGA_CP_OUTPUT}}//results/class_lac/uncertainty_domain_figure_global.png"
     params:
       classification: True
-      ncm_code: "crfecfp"
+      ncm_code: "cgbecfp"
       data: "{{vega_class}}"
       prefix: "class_apply_{{input_key}}_"
       max_files: 300
