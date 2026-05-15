@@ -626,7 +626,7 @@ def plot_classification_ncm_comparison(df, output_path=None, efficiency='Singlet
     
     bars = ax1.barh(ncm_sorted['ncm'], ncm_sorted['singleton_mean'], 
                      color=colors, edgecolor='black', linewidth=1.5)
-    
+    #ax1.set_xlim(0, ncm_sorted['singleton_mean'].max() * 1.2)
     # Add values
     """
     for i, (idx, row) in enumerate(ncm_sorted.iterrows()):
@@ -747,14 +747,11 @@ def plot_classification_ncm_comparison(df, output_path=None, efficiency='Singlet
     ax4 = fig.add_subplot(gs[1, 1])
     
     # Select top 5 NCMs by efficiency
-    top_5_ncms = ncm_sorted.head(5)['ncm'].tolist()
+    top_5_ncms = ncm_sorted.head(6)['ncm'].tolist()
+    df_top5 = df_test[df_test['ncm'].isin(top_5_ncms)].dropna(subset=[efficiency]) 
 
-    df_top5 = df[df['Split'] == 'Test'][df['ncm'].isin(top_5_ncms)]
-    #df_top5 = df_test[df_test['ncm'].isin(top_5_ncms)]
-
-    print(df_top5[["ncm", efficiency]])
-    
     # Create box plot
+    
     positions = np.arange(len(top_5_ncms))
     bp = ax4.boxplot([df_top5[df_top5['ncm'] == ncm][efficiency].values
                       for ncm in top_5_ncms],
@@ -789,6 +786,7 @@ def plot_classification_ncm_comparison(df, output_path=None, efficiency='Singlet
                  fontsize=14, fontweight='bold')
     ax4.grid(axis='y', alpha=0.3)
     
+
     # Overall title
     fig.suptitle('Classification Auxiliary Model Comparison', 
                 fontsize=16, fontweight='bold', y=0.995)

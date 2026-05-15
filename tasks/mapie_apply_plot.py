@@ -33,9 +33,12 @@ logger = init_logging(Path(product["nb"]).parent / "logs", "plots.log")
 # -----------------------------
 # CONFIGURATION - FIXED BINS
 # -----------------------------
+from textwrap import shorten
 
 ADI_BINS = ADI_BIN_EDGES
 ADI_LABELS = ADI_BIN_LABELS
+
+ADI_LABELS_SHORT = [shorten(lbl.split('(')[0].strip(), width=12, placeholder='…') for lbl in ADI_BIN_LABELS]
 
 
 CHUNK_SIZE = 50000  # Process data in chunks after loading (memory management)
@@ -1005,7 +1008,8 @@ def plot_classification_summary(aggregator: 'ConformalAggregator',
                  fontsize=8)
 
     ax1.set_xticks(x_pos)
-    ax1.set_xticklabels(ADI_LABELS, fontsize=9)
+    ax1.set_xticklabels(ADI_LABELS_SHORT, fontsize=9)
+    
     ax1.set_ylabel('Percentage of Predictions (%)', fontsize=11, fontweight='bold')
     ax1.set_ylim(0, 105)
     interp = '\u2713 Good' if rho_global > 0.3 else ('\u25cb Weak' if rho_global > 0 else '\u26a0 Unexpected')
@@ -1033,7 +1037,7 @@ def plot_classification_summary(aggregator: 'ConformalAggregator',
     bars1b = ax1b.bar(x_pos, counts_adi, bar_w,
                       alpha=0.7, color='coral', edgecolor='darkred')
     ax1b.set_xticks(x_pos)
-    ax1b.set_xticklabels(ADI_LABELS, fontsize=9)
+    ax1b.set_xticklabels(ADI_LABELS_SHORT, fontsize=9)
     ax1b.set_ylabel('Number of Predictions', fontsize=11, fontweight='bold')
     ax1b.set_title('Sample Distribution by ADI', fontsize=11, fontweight='bold')
     ax1b.grid(axis='y', alpha=0.3, linestyle='--')
@@ -1125,7 +1129,7 @@ def plot_classification_summary(aggregator: 'ConformalAggregator',
     )
 
     ax3.set_xticks(np.arange(len(ADI_LABELS)))
-    ax3.set_xticklabels(ADI_LABELS, fontsize=9, rotation=30, ha='right')
+    ax3.set_xticklabels(ADI_LABELS_SHORT, fontsize=9, rotation=30, ha='right')
     ax3.set_yticks(np.arange(len(names_sorted)))
     ax3.set_yticklabels(names_sorted, fontsize=7)
     ax3.set_title('Reliability Heatmap\n(singleton rate % per model × ADI bin)',
@@ -1175,7 +1179,7 @@ def plot_global_analysis_regression(aggregator: 'ConformalAggregator', save_path
     ax1.bar(x_pos, means, yerr=stds, capsize=5,
             alpha=0.7, color='steelblue', edgecolor='navy')
     ax1.set_xticks(x_pos)
-    ax1.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
+    ax1.set_xticklabels(ADI_LABELS_SHORT, rotation=0, ha='right')
     ax1.set_ylabel('Mean Relative Interval Width', fontsize=11, fontweight='bold')
     ax1.set_title('A: Efficiency vs Applicability Domain', fontsize=12, fontweight='bold')
     ax1.grid(axis='y', alpha=0.3, linestyle='--')
@@ -1184,7 +1188,7 @@ def plot_global_analysis_regression(aggregator: 'ConformalAggregator', save_path
     ax2 = fig.add_subplot(gs[0, 1])
     bars = ax2.bar(x_pos, counts, alpha=0.7, color='coral', edgecolor='darkred')
     ax2.set_xticks(x_pos)
-    ax2.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
+    ax2.set_xticklabels(ADI_LABELS_SHORT, rotation=0, ha='right')
     ax2.set_ylabel('Number of Predictions', fontsize=11, fontweight='bold')
     ax2.set_title('B: Sample Distribution by ADI', fontsize=12, fontweight='bold')
     ax2.grid(axis='y', alpha=0.3, linestyle='--')
@@ -1300,14 +1304,14 @@ def plot_model_comparison_regression(aggregator: 'ConformalAggregator', save_pat
         for i, name in enumerate(model_list):
             mm = aggregator.model_adi[name].get_mean_metric()
             vals = [mm[k] for k in ADI_LABELS]
-            ax.plot(ADI_LABELS, vals, marker='o', label=name[:20],
+            ax.plot(ADI_LABELS_SHORT, vals, marker='o', label=name[:20],
                     linewidth=2, alpha=0.7, color=cmap10(i))
         ax.set_xlabel('ADI Bin', fontsize=10, fontweight='bold')
         ax.set_ylabel('Mean Interval Width', fontsize=10, fontweight='bold')
         ax.set_title(title, fontsize=11, fontweight='bold')
         ax.legend(fontsize=7, loc='best')
         ax.grid(alpha=0.3, linestyle='--')
-        ax.set_xticklabels(ADI_LABELS, rotation=45, ha='right')
+        ax.set_xticklabels(ADI_LABELS_SHORT, rotation=0, ha='right')
 
     # Row 2: stacked bar — mean interval width per model, colour-coded by bin
     ax4 = fig.add_subplot(gs[2, :])
@@ -1329,13 +1333,13 @@ def plot_model_comparison_regression(aggregator: 'ConformalAggregator', save_pat
 
     ax4.set_xticks(x_m)
     ax4.set_xticklabels(display_models, rotation=45, ha='right', fontsize=7)
-    ax4.set_ylabel('Mean Relative Interval Width (per bin, averaged)', fontsize=10, fontweight='bold')
+    ax4.set_ylabel('Mean Relative Interval Width\n (per bin, averaged)', fontsize=10, fontweight='bold')
     ax4.set_title('Interval Width Breakdown by ADI Bin and Model', fontsize=12, fontweight='bold')
-    ax4.legend(title='ADI Bin', fontsize=9, loc='upper right')
+    ax4.legend(title='ADI Bin', fontsize=9, loc='upper left')
     ax4.grid(axis='y', alpha=0.3, linestyle='--')
 
     fig.suptitle(
-        f'Model Comparison Analysis (Regression)\n'
+        f'Model Comparison Analysis (Regression) '
         f'({len(aggregator.model_names)} models total)',
         fontsize=14, fontweight='bold', y=0.998)
 
