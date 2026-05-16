@@ -5,7 +5,35 @@ meta:
 
 tasks:
 
+# report_*.txt files from VEGA training/test sets
+  - source: tasks/make_archive.py
+    name: "make_archive_vega_reports"
+    upstream: []    
+    product: 
+      nb: "{{VEGA_ARCHIVE}}/make_archive_vega_reports.ipynb"
+      zip: "{{VEGA_ARCHIVE}}/vega_reports.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      folders_to_scan: [
+                    "{{VEGA_RESULT_FILES}}" ]
+      extensions_to_include: [".txt"]
+      recursive: True
 
+# resultsw_*.txt files from VEGA predictions on DSSTox v7
+  - source: tasks/make_archive.py
+    name: "make_archive_vega_reports_comptox"
+    upstream: []    
+    product: 
+      nb: "{{VEGA_ARCHIVE}}/make_archive_vega_reports_comptox.ipynb"
+      zip: "{{VEGA_ARCHIVE}}/vega_reports_comptox.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      folders_to_scan: [
+                    "{{VEGA_REPORTS_INPUT}}" ]
+      extensions_to_include: [".txt"]
+      recursive: True
+
+# VEGA predictions in a format appropriate for input to pipeline.mapie.yaml
   - source: tasks/make_archive.py
     name: "make_archive_vega"
     upstream: []    
@@ -19,7 +47,8 @@ tasks:
       extensions_to_include: [".xlsx"]
       recursive: True
 
-
+# Conformal prediction on VEGA training/test datasets 
+# output of pipeline.mapie.yaml
   - source: tasks/make_archive.py
     name: "make_archive_mapie"
     upstream: []    
@@ -33,7 +62,9 @@ tasks:
       extensions_to_include: [".xlsx"]
       recursive: True
 
-
+# Conformal prediction on EPA CompTox dataset 
+# classification
+# output of pipeline.mapie.yaml
   - source: tasks/make_archive.py
     name: "make_archive_comptox_class_hard"
     upstream: []    
@@ -47,6 +78,9 @@ tasks:
       extensions_to_include: [".xlsx"]
       recursive: True
 
+# Conformal prediction on EPA CompTox dataset 
+# Regression
+# output of pipeline.mapie.yaml
   - source: tasks/make_archive.py
     name: "make_archive_comptox_regr"
     upstream: []    

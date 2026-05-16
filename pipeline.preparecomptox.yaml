@@ -1,0 +1,25 @@
+executor: serial
+
+meta:
+    extract_upstream: False
+
+
+# Prepares input to VEGA QSAR - converts DSSToxDump*.xlsx files to a single .txt with input smiles and DTXSID
+# Tested with DSSTox2024 (v7)
+# https://epa.figshare.com/articles/dataset/Chemistry_Dashboard_Data_DSSTox_Identifiers_Mapped_to_CAS_Numbers_and_Names/5588566/7?file=45581535
+# VEGA GUI will crash with this file 
+# use https://github.com/ideaconsult/quarkus-vega-cli instead to generate VEGA predictions
+# The predictions will be then used in pipeline.mapie.yaml as evaluation of the conformal prediction framework for QSAR
+# The files with predictions are available at https://zenodo.org/records/18444068
+
+tasks:
+  - source: tasks/load_epacomptox.py
+    upstream: []
+    name: "epacomptox"
+    product: 
+      nb: "{{products}}/load_epacomptox.ipynb"
+      data: "D:\\nina\\DATA\\COMPTOX\\DSSTox_Feb_2024\\epacomptox.txt"
+    params:
+      inchi_cache: "{{products}}/cache_inchi.json"
+      input_folder: "{{epacomptox}}"
+      target: "txt"
