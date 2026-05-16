@@ -388,7 +388,7 @@ plt.show(); plt.close(fig_eff)
 # ==============================================================================
 display(Markdown("## S8  Prediction intervals on test set"))
 
-n_show = min(100, len(test_df))
+n_show = min(10000, len(test_df))
 idx_s  = np.argsort(y_test)[:n_show]
 fig_pi, axes_pi = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 for ax, lower, upper, pred, cov, title in [
