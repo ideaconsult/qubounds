@@ -134,7 +134,7 @@ Requires Python ≥ 3.12. Dependencies are managed with UV.
 
 ```bash
 git clone <repository_url>
-cd qubounds_clean
+cd qubounds
 ```
 
 Key dependencies: `mapie`, `scikit-learn`, `lightgbm`, `catboost`, `mord`, `rdkit`, `ploomber`, `pandas`, `plotly`, `statsmodels`.
