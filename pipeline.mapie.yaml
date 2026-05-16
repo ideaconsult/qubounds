@@ -264,3 +264,36 @@ tasks:
       enabled: False
     grid:
       input_key: "{{input_key}}"
+
+
+
+  # ── Regression publication plots ──
+  - source: tasks/mapie_publication_plots.py
+    name: "pubplot_regr_[[ncm]]"
+    upstream: ["mapie_*"]
+    product:
+      nb:  "{{CP_MODELS}}/publication_plots/regression/pubplots_[[ncm]].ipynb"
+      plots: "{{CP_MODELS}}/publication_plots/regression/[[ncm]]"
+    params:
+      alpha:       0.1
+      n_show:      1000
+      model_type: "regression"
+      data: "{{vega_regr}}"
+    grid:      
+      ncm:  ["rlgbmecfp"]
+
+
+  # ── Classification publication plots ───
+  - source: tasks/mapie_publication_plots.py
+    name: "pubplot_class_[[ncm]]"
+    upstream: ["mapiec_*"]
+    product:
+      nb:          "{{CP_MODELS}}/publication_plots/classification/pubplots_[[ncm]].ipynb"
+      plots: "{{CP_MODELS}}/publication_plots/classification/[[ncm]]"
+    params:
+      alpha:       0.1
+      n_show:      1000
+      model_type: "classification"
+      data: "{{vega_class}}"
+    grid:
+      ncm:  ["cgbecfp"]
