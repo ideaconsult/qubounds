@@ -1,0 +1,61 @@
+executor: serial
+
+meta:
+    extract_upstream: False
+
+tasks:
+
+
+  - source: tasks/make_archive.py
+    name: "make_archive_vega"
+    upstream: []    
+    product: 
+      nb: "{{VEGA_ARCHIVE}}/make_archive_vega.ipynb"
+      zip: "{{VEGA_ARCHIVE}}/vega_datasets.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      folders_to_scan: [
+                    "{{VEGA_DATA}}/vega/classification", "{{VEGA_DATA}}/vega/regression"]
+      extensions_to_include: [".xlsx"]
+      recursive: True
+
+
+  - source: tasks/make_archive.py
+    name: "make_archive_mapie"
+    upstream: []    
+    product: 
+      nb: "{{VEGA_ARCHIVE}}/make_archive_mapie.ipynb"
+      zip: "{{VEGA_ARCHIVE}}/vega_mapie_conformal.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      folders_to_scan: ["{{CP_MODELS}}/mapie/vega/regression/rlgbmecfp", 
+                    "{{CP_MODELS}}/mapie/vega/class_lac/cgbecfp"]
+      extensions_to_include: [".xlsx"]
+      recursive: True
+
+
+  - source: tasks/make_archive.py
+    name: "make_archive_comptox_class_hard"
+    upstream: []    
+    product: 
+      nb: "{{VEGA_ARCHIVE}}/make_archive_comptox.ipynb"
+      zip: "{{VEGA_ARCHIVE}}/vega_comptox_conformal_class_hard.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      folders_to_scan: [
+                    "{{VEGA_CP_OUTPUT}}/comptox/class_lac"]
+      extensions_to_include: [".xlsx"]
+      recursive: True
+
+  - source: tasks/make_archive.py
+    name: "make_archive_comptox_regr"
+    upstream: []    
+    product: 
+      nb: "{{VEGA_ARCHIVE}}/make_archive_comptox_regr.ipynb"
+      zip: "{{VEGA_ARCHIVE}}/vega_comptox_conformal_regression.zip"
+    params:
+      enabled: "{{enable_archive}}"
+      folders_to_scan: ["{{VEGA_CP_OUTPUT}}/comptox/regression", 
+                    ]
+      extensions_to_include: [".xlsx"]
+      recursive: True
