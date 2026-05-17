@@ -1258,199 +1258,79 @@ def plot_e1_regression_exchangeability(
     return path
 
 
-def _get_cal_scores_classifier(mapie_obj):
+def _compute_lac_scores(saved, df, model, cache_path=None):
     """
-    Extract calibration conformity scores from SplitConformalClassifier.
-    Correct path (confirmed by introspection):
-      mapie._mapie_classifier.conformity_scores_   shape (n_cal, 1)
-    Returns 1-D array.
-    """
-    raw = mapie_obj._mapie_classifier.conformity_scores_
-    return raw.squeeze()
+    Compute LAC conformity scores directly from the saved model + DataFrame.
 
+    s_i = 1 - p_pseudo(y_true | x)  where true label is known.
+    s_i = 1 - p_pseudo(y_pred | x)  where true label is absent.
 
-def _recompute_test_scores(saved, df_excel, model, cache_path):
-    """
-    Compute test LAC scores: s_i = 1 - p_pseudo(y_true_i | x_i).
-
-    Route A — tutorial Excel (has pseudo_p_* columns):
-        No ECFP recomputation needed.
-
-    Route B — main-pipeline Excel (has in_set_class_* columns):
-        Reconstruct pseudo-probabilities from the NCM distance model
-        already stored in the pickle + ECFP fingerprints.
-        Requires Smiles column + cache_path.
-
-    Route C — in_set_class_* + true label available (no ECFP needed):
-        Use 1 - in_set score proxy: s_i = 1 - p_pseudo derived from
-        saved calibration quantile.  Approximate but avoids cache_path.
-        Used as fallback when cache_path is None.
+    No column-sniffing, no routes.  Uses sigma_model from the pickle and
+    ECFP fingerprints computed from the Smiles column.
+    cache_path is optional: only speeds up fingerprint memoisation.
 
     Returns
     -------
-    scores_test   : 1-D float array  (n_test,)
-    y_true_mapped : 1-D int array    (n_test,)  contiguous class indices
-    class_order   : list of original class labels (for display)
-    route         : str
+    scores        : 1-D float array (n,)
+    y_true_mapped : 1-D int array   (n,)  — -1 where true label absent
     """
-    sigma_model   = saved["sigma_model"]
-    ncm_type      = saved["ncm"]
-    classes       = saved["classes"]           # contiguous 0-based ints
-    classes_orig  = saved["classes_original"]
-    class_to_map  = saved["class_to_mapped"]
-    mapped_to_cls = saved["mapped_to_class"]
+    from qubounds.descriptors.ecfp import smiles_to_ecfp_cached
+    from qubounds.mapie_class_lac import NCMProbabilisticClassifier
 
-    # ── detect true-label column ───────────────────────────────────────────────
-    true_col_candidates = [f"{model}_true", "True", "true", "Experimental", "Exp", "exp"]
-    true_col = next((c for c in true_col_candidates if c in df_excel.columns), None)
-    has_true = true_col is not None and df_excel[true_col].notna().any()
+    if cache_path is not None:
+        from qubounds.descriptors.ecfp import init_cache
+        init_cache(cache_path)
 
-    # ── Route A: tutorial Excel with pseudo_p_* columns ───────────────────────
-    pseudo_cols = [c for c in df_excel.columns if "pseudo_p_" in c.lower()]
-
-    if pseudo_cols and has_true:
-        display(Markdown(
-            f"  Route A: reconstructing test scores from `pseudo_p_*` columns."
-        ))
-
-        def _parse_cls(col):
-            sfx = col.lower().split("pseudo_p_")[-1]
-            try:
-                return int(sfx)
-            except ValueError:
-                return sfx
-
-        col_cls_order = [_parse_cls(c) for c in pseudo_cols]
-        cls_to_col    = {cls: i for i, cls in enumerate(col_cls_order)}
-
-        y_true_raw = df_excel[true_col].dropna().values
-        proba_mat  = df_excel[pseudo_cols].values.astype(float)
-
-        valid = np.array([y in cls_to_col for y in y_true_raw])
-        y_tv  = y_true_raw[valid]
-        pp_v  = proba_mat[valid]
-        col_i = np.array([cls_to_col[y] for y in y_tv])
-        scores_test   = 1.0 - pp_v[np.arange(len(y_tv)), col_i]
-        y_true_mapped = np.array([class_to_map.get(y, -1) for y in y_tv])
-        return scores_test, y_true_mapped, list(classes_orig), "tutorial_pseudo_p"
-
+    sigma_model  = saved["sigma_model"]
+    ncm_type     = saved["ncm"]
+    classes      = saved["classes"]
+    class_to_map = saved["class_to_mapped"]
 
     def _map(v):
         try:
             return class_to_map.get(int(float(v)), class_to_map.get(v, -1))
         except (TypeError, ValueError):
-            return class_to_map.get(v, -1)
+            return -1
 
-    # ── Route C: {tag}_lac_score_true — exact, no ECFP, check BEFORE Route B preamble ──
-    lac_col = f"{model}_lac_score_true"
-    if lac_col in df_excel.columns and has_true:
-        display(Markdown(f"  Route C: reading exact LAC scores from `{lac_col}` column."))
-        df_lac        = df_excel[[true_col, lac_col]].dropna().reset_index(drop=True)
-        y_true_mapped = np.array([_map(v) for v in df_lac[true_col].values])
-        valid_lac     = y_true_mapped >= 0
-        scores_test   = df_lac.loc[valid_lac, lac_col].values.astype(float)
-        y_true_mapped = y_true_mapped[valid_lac]
-        return scores_test, y_true_mapped, list(classes_orig), "excel_lac_score_true"
-
-    # ── Route B preamble: build df_v, y_true_mapped, y_pred_mapped ────────────────
-    inset_cols = [c for c in df_excel.columns if c.startswith("in_set_class_")]
-    if not has_true:
-        raise RuntimeError(
-            "Cannot compute test LAC scores without true labels. "
-            f"Tried columns: {true_col_candidates}"
-        )
-
-    pred_candidates = [f"{model}_pred", "pred", "Pred", "Predicted"]
-    pred_col = next((c for c in pred_candidates if c in df_excel.columns), None)
-    if pred_col is None:
-        raise RuntimeError(f"No prediction column found. Tried: {pred_candidates}")
-
-
-    df_v          = df_excel.dropna(subset=[true_col, pred_col]).reset_index(drop=True)
-    y_true_mapped = np.array([_map(v) for v in df_v[true_col].values])
-    y_pred_mapped = np.array([_map(v) for v in df_v[pred_col].values])
-    valid         = (y_true_mapped >= 0) & (y_pred_mapped >= 0)
-    df_v          = df_v[valid].reset_index(drop=True)
-    y_true_mapped = y_true_mapped[valid]
-    y_pred_mapped = y_pred_mapped[valid]
-
-   # ── Route D: in_set_class_* binary proxy (last resort) ───────────────────
-    # Approximate: 0 if true class in prediction set, 1 if not.
-    # Works without re-running mapiec.py but gives binary not continuous scores.
-    if inset_cols:
-        display(Markdown(
-            "  Route D (fallback): binary proxy from `in_set_class_*` columns. "
-            "Re-run mapiec.py with the lac_score patch for exact continuous scores."
-        ))
-        def _parse_inset(col):
-            sfx = col.replace("in_set_class_", "")
-            try:
-                v = float(sfx); return int(v) if v == int(v) else v
-            except ValueError:
-                return sfx
- 
-        inset_cls_order  = [_parse_inset(c) for c in inset_cols]
-        inset_to_j       = {c: i for i, c in enumerate(inset_cls_order)}
-        n_v              = len(df_v)
-        in_set_m         = np.zeros((n_v, len(inset_cls_order)), dtype=bool)
-        for col in inset_cols:
-            j = inset_to_j.get(_parse_inset(col), -1)
-            if j >= 0:
-                in_set_m[:, j] = df_v[col].values.astype(bool)
- 
-        inset_cls_mapped = {_map(c): i for c, i in inset_to_j.items()}
-        scores_test = np.array([
-            0.0 if (y_true_mapped[i] in inset_cls_mapped
-                    and in_set_m[i, inset_cls_mapped[y_true_mapped[i]]])
-            else 1.0
-            for i in range(n_v)
-        ])
-        return scores_test, y_true_mapped, list(classes_orig), "inset_binary_proxy"
- 
-    if cache_path is None:
-        raise RuntimeError(
-            "No lac_score column, no in_set_class_* columns, and cache_path is None. "
-            "Re-run mapiec.py with the lac_score patch."
-        )
-
-    # ── Route B proper: ECFP recompute ────────────────────────────────────────
-
-    display(Markdown("  Route B: recomputing via ECFP + NCM model."))
- 
-    smiles_col = next(
-        (c for c in ["Smiles", "SMILES", "smiles"] if c in df_excel.columns), None
-    )
+    smiles_col = next((c for c in ["Smiles", "SMILES", "smiles"] if c in df.columns), None)
     if smiles_col is None:
-        raise RuntimeError("No Smiles column found in Excel for Route B.")
- 
-    df_v_sm       = df_v.loc[df_v[smiles_col].notna()].reset_index(drop=True)
-    y_true_mapped = y_true_mapped[:len(df_v_sm)]
-    y_pred_mapped = y_pred_mapped[:len(df_v_sm)]
- 
-    from qubounds.descriptors.ecfp import smiles_to_ecfp_cached
-    from qubounds.mapie_class_lac import NCMProbabilisticClassifier
- 
-    # cache_path may be None — smiles_to_ecfp_cached works without cache,
-    # it just won't persist fingerprints between runs.
-    if cache_path is not None:
-        from qubounds.descriptors.ecfp import init_cache
-        init_cache(cache_path)
- 
-    X_test = np.array([smiles_to_ecfp_cached(s) for s in df_v_sm[smiles_col].values])
- 
+        raise RuntimeError("No Smiles column found.")
+
+    pred_col = next(
+        (c for c in [f"{model}_pred", "Pred", "pred", "Predicted"] if c in df.columns), None
+    )
+    if pred_col is None:
+        raise RuntimeError(f"No prediction column. Tried: {model}_pred, Pred, pred")
+
+    true_col = next(
+        (c for c in [f"{model}_true", "True", "true", "Experimental"] if c in df.columns), None
+    )
+
+    df_v = df.dropna(subset=[smiles_col, pred_col]).reset_index(drop=True)
+    y_pred_mapped = np.array([_map(v) for v in df_v[pred_col].values])
+    valid_pred    = y_pred_mapped >= 0
+    df_v          = df_v[valid_pred].reset_index(drop=True)
+    y_pred_mapped = y_pred_mapped[valid_pred]
+
+    y_true_mapped = np.full(len(df_v), -1, dtype=int)
+    if true_col is not None:
+        for i, v in enumerate(df_v[true_col].values):
+            y_true_mapped[i] = _map(v)
+
+    X = np.array([smiles_to_ecfp_cached(s) for s in df_v[smiles_col].values])
+
     ncm_est = NCMProbabilisticClassifier(
-        y_pred    = y_pred_mapped,
-        ncm_model = sigma_model,
-        ncm_type  = ncm_type,
-        classes   = classes,
+        y_pred=y_pred_mapped, ncm_model=sigma_model,
+        ncm_type=ncm_type, classes=classes,
     )
     ncm_est.fit()
-    pseudo_proba = ncm_est.predict_proba(X_test)
-    scores_test  = 1.0 - pseudo_proba[np.arange(len(y_true_mapped)), y_true_mapped]
- 
-    return scores_test, y_true_mapped, list(classes_orig), "ecfp_recompute"
- 
- 
+    pseudo_proba = ncm_est.predict_proba(X)   # (n, n_classes)
+
+    target_idx = np.where(y_true_mapped >= 0, y_true_mapped, y_pred_mapped)
+    scores     = 1.0 - pseudo_proba[np.arange(len(target_idx)), target_idx]
+    return scores, y_true_mapped
+
+
 def _load_lac_scores_from_excel(excel_path, model):
     """
     Load classification calibration LAC scores from the Excel.
@@ -1521,54 +1401,39 @@ def plot_e2_classification_exchangeability(
 
     mapie_obj = saved["mapie"]
 
-    # ── Calibration scores: Excel first (exact), pickle as fallback ───────────
+    # ── Calibration and test LAC scores — computed directly from the model ───────
+    # Cal: from the Calibration PI sheet (written by mapiec.py).
+    # Test: from the Prediction Intervals sheet.
+    # Both use _compute_lac_scores: Smiles + pred col + sigma_model from pickle.
+    # cache_path is optional (fingerprint memoisation only).
+
     try:
-        scores_cal, cal_source = _load_lac_scores_from_excel(class_excel_path, model)
+        df_cal = pd.read_excel(class_excel_path, sheet_name="Calibration PI")
+        scores_cal, _ = _compute_lac_scores(saved, df_cal, model, cache_path)
+        scores_cal = scores_cal[np.isfinite(scores_cal)]
+        cal_source = "Calibration PI"
         display(Markdown(
-            f"  Cal scores from Excel '{cal_source}': n={len(scores_cal)}, "
+            f"  Cal scores from Excel sheet '{cal_source}': n={len(scores_cal)}, "
             f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
         ))
-    except RuntimeError as exc_excel:
-        display(Markdown(
-            f"  Excel cal scores unavailable ({exc_excel}); trying pickle."
-        ))
-        try:
-            scores_cal = _get_cal_scores_classifier(saved["mapie"])
-            cal_source = "pickle"
-            display(Markdown(
-                f"  Cal scores from pickle: n={len(scores_cal)}, "
-                f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
-            ))
-        except AttributeError as exc_pkl:
-            display(Markdown(
-                f"E2 skipped for {model}: cannot load calibration scores — {exc_pkl}"
-            ))
-            return None, None
-
-    display(Markdown(
-        f"  Calibration scores: n={len(scores_cal)}, "
-        f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
-    ))
-
-    # ── test LAC scores ─────────────────────────────────────────────────────────
-    df = pd.read_excel(class_excel_path, sheet_name="Prediction Intervals")
-    display(Markdown(f"  Excel columns: `{list(df.columns)}`"))
-
-    try:
-        scores_test, y_true_mapped, class_order, route = _recompute_test_scores(
-            saved, df, model, cache_path
-        )
-    except Exception as exc:
-        display(Markdown(
-            f"E2 skipped for {model}: cannot compute test scores — {exc}"
-        ))
+    except Exception as exc_cal:
+        display(Markdown(f"E2 skipped for {model}: cannot compute calibration scores — {exc_cal}"))
         return None, None
 
-    display(Markdown(
-        f"  Test scores: n={len(scores_test)}, "
-        f"range=[{scores_test.min():.3f}, {scores_test.max():.3f}]  "
-        f"(route: {route})"
-    ))
+    try:
+        df_test = pd.read_excel(class_excel_path, sheet_name="Prediction Intervals")
+        scores_test_all, y_true_mapped_all = _compute_lac_scores(saved, df_test, model, cache_path)
+        # keep only rows where true label is known
+        has_true_mask = y_true_mapped_all >= 0
+        scores_test   = scores_test_all[has_true_mask]
+        y_true_mapped = y_true_mapped_all[has_true_mask]
+        display(Markdown(
+            f"  Test scores (n with true label={has_true_mask.sum()}): "
+            f"range=[{scores_test.min():.3f}, {scores_test.max():.3f}]"
+        ))
+    except Exception as exc_test:
+        display(Markdown(f"E2 skipped for {model}: cannot compute test scores — {exc_test}"))
+        return None, None
 
     # ── conformal p-values ─────────────────────────────────────────────────────
     p_values = np.array([np.mean(scores_cal >= s_i) for s_i in scores_test])

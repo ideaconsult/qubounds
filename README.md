@@ -312,6 +312,8 @@ These diagnostics are computed automatically in all tutorial and full pipeline t
 
 ![FISH_IRFMN_exchtest](classification_exchangeability.png "Exchangeability tests for VEGA QSAR classification model for fish acute (LC50) toxicity FISH_IRFMN")
 
+![FISH_IRFMN_exchtest](classification_exchangeability_classwise.png "Classwise Exchangeability tests for VEGA QSAR classification model for fish acute (LC50) toxicity FISH_IRFMN")
+
 ---
 
 ## Pipeline outputs
