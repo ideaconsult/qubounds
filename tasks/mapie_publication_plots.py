@@ -68,16 +68,6 @@ Parameters (Ploomber)
   product       : {nb, plots}
 """
 
-# + tags=["parameters"]
-data = None
-alpha = 0.1
-n_show = 200
-model_type = None
-ncm = None
-product = None
-upstream = None
-# -
-
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -89,6 +79,20 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize, BoundaryNorm
 from pathlib import Path
 from IPython.display import display, Markdown
+import pickle 
+from scipy.stats import ks_2samp
+
+
+# + tags=["parameters"]
+data = None
+alpha = 0.1
+n_show = 200
+model_type = None
+ncm = None
+cache_path = None   # path to ecfp4_cache.db  e.g. "{{CP_MODELS}}/mapie/ecfp4_cache.db"
+product = None
+upstream = None
+# -
 
 %matplotlib inline
 
@@ -105,7 +109,16 @@ PALETTE = {
     "neutral":    "#607D8B",   # grey-blue
     "green":      "#27ae60",
     "background": "#F5F5F5",
+    "in_set":    "#B0BEC5",   # grey  – other classes in prediction set
+    "true_cov":  "#2196F3",   # blue  – true class, covered
+    "true_miss": "#e74c3c",   # red   – true class, missed
+    "divider":   "#78909C",   # set-size boundary lines    
 }
+_COLORS = {
+    "CALIBRATION": "#FF9800",
+    "TEST":        "#2196F3",
+}
+
 CMAP_WIDTH   = "YlOrRd"   # narrow=yellow → wide=red
 CMAP_PROB    = "Blues"
 
@@ -557,104 +570,233 @@ def _load_class(path, model, sheetname='Prediction Intervals'):
 
     return df, meta
 
+# =============================================================================
+# C1 — Classification dot-plot (analogue of regression R1)
+# =============================================================================
 
-# =============================================================================
-# C1 — Prediction-set heatmap
-# =============================================================================
-def plot_c1_set_heatmap(df, meta, model, alpha, out_dir, max_molecules=80,
-                        class_names=None):
+def plot_c1_dotplot(
+    df,                  # DataFrame from _load_class()  ← was `data` (dict)
+    meta,
+    model,
+    alpha,
+    out_dir,
+    class_labels=None,   # override display labels, e.g. ["Non-mutagen","Mutagen"]
+    n_show=1000,
+    sheet=None,
+):
     """
-    Rows = molecules (sorted by set size desc, then true class),
-    Columns = classes.
-    Cell colour = pseudo-probability (or 1/0 in-set indicator if not available).
-    Green border = true class.  Red X = predicted class outside true.
+    Classification analogue of R1.  Works directly from the DataFrame
+    returned by _load_class() — no intermediate dict required.
+ 
+    x-axis  : molecule rank (sorted by set_size, then predicted class)
+    y-axis  : class (discrete)
+    Grey vertical bar  : prediction set span (min to max class in set)
+    Grey dots          : other classes in prediction set
+    Orange dot         : predicted class ŷ
+    Blue dot           : true class (covered)
+    Red X              : true class (missed)
     """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+ 
     if "set_size" not in df.columns:
         display(Markdown(f"C1 skipped for {model}: no set_size column."))
         return None
-
-    pseudo_cols = df.attrs.get("pseudo_cols", [])
-    has_true    = df["has_true"].any() if "has_true" in df.columns else False
-
-    # Determine classes
-    if class_names is None:
-        all_vals = []
-        if has_true:
-            all_vals += df["true"].dropna().tolist()
-        all_vals += df["pred"].dropna().tolist()
+ 
+    # ── derive class list from in_set_class_* columns ─────────────────────────
+    inset_cols = sorted([c for c in df.columns if c.startswith("in_set_class_")])
+ 
+    def _parse_inset_cls(col):
+        sfx = col.replace("in_set_class_", "")
         try:
-            class_names = sorted(set(int(v) for v in all_vals))
-        except Exception:
-            class_names = sorted(set(str(v) for v in all_vals))
-
-    n_classes = len(class_names)
-    sort_key  = ["set_size"] + (["true"] if has_true else [])
-    df_s = df.sort_values(sort_key, ascending=[False] + [True] * (len(sort_key)-1))
-    df_s = df_s.head(max_molecules).reset_index(drop=True)
-    n_mol = len(df_s)
-
-    # Build probability matrix
-    if pseudo_cols:
-        mat = np.zeros((n_mol, n_classes))
-        for j, cls in enumerate(class_names):
-            col_candidates = [c for c in pseudo_cols
-                              if str(cls) in c or str(cls).lower() in c.lower()]
-            if col_candidates:
-                mat[:, j] = df_s[col_candidates[0]].fillna(0).values
-    else:
-        # Fallback: binary in-set matrix from set_size (not ideal but usable)
-        mat = np.zeros((n_mol, n_classes))
-        for i in range(n_mol):
-            sz = int(df_s["set_size"].iloc[i])
-            pred_cls = df_s["pred"].iloc[i]
-            try:
-                pred_idx = list(class_names).index(pred_cls)
-            except ValueError:
-                pred_idx = 0
-            for j in range(n_classes):
-                dist = abs(j - pred_idx)
-                mat[i, j] = 1 if dist < sz else 0
-
-    fig, ax = plt.subplots(figsize=(max(5, n_classes * 1.2), max(6, n_mol * 0.22)))
-    im = ax.imshow(mat, aspect="auto", cmap=CMAP_PROB,
-                   vmin=0, vmax=mat.max() if mat.max() > 0 else 1,
-                   interpolation="nearest")
-    fig.colorbar(im, ax=ax, shrink=0.5, label="Pseudo-probability")
-
-    ax.set_xticks(range(n_classes))
-    ax.set_xticklabels([str(c) for c in class_names], fontsize=9)
-    ax.set_yticks([])
-    ax.set_xlabel("Class", fontsize=10)
-    ax.set_ylabel(f"Molecules (n={n_mol}, sorted by set size ↓)", fontsize=9)
-    ax.set_title(f"{model} — Prediction-set heatmap  (α={alpha})\n"
-                 "Colour = pseudo-probability; green outline = true class",
-                 fontsize=11)
-
-    # Overlays: true class border, predicted class marker
-    for i in range(n_mol):
-        pred_cls = df_s["pred"].iloc[i]
-        try:
-            pred_j = list(class_names).index(pred_cls)
+            v = float(sfx)
+            return int(v) if v == int(v) else v
         except ValueError:
-            pred_j = None
+            return sfx
+ 
+    if inset_cols:
+        classes_orig = [_parse_inset_cls(c) for c in inset_cols]
+    else:
+        vals = list(df["pred"].dropna().unique())
+        if df["has_true"].any():
+            vals += list(df["true"].dropna().unique())
+        try:
+            classes_orig = sorted(set(int(v) for v in vals))
+        except Exception:
+            classes_orig = sorted(set(str(v) for v in vals))
+ 
+    n_classes  = len(classes_orig)
+    cls_to_idx = {c: i for i, c in enumerate(classes_orig)}
+ 
+    if class_labels is not None:
+        assert len(class_labels) == n_classes, \
+            f"class_labels length {len(class_labels)} != n_classes {n_classes}"
+        disp_labels = class_labels
+    else:
+        disp_labels = [str(c) for c in classes_orig]
+ 
+    classes_idx = np.arange(n_classes)
+ 
+    # ── coerce pred / true to contiguous index ────────────────────────────────
+    def _to_idx(v):
+        try:
+            return cls_to_idx.get(int(float(v)), cls_to_idx.get(v, -1))
+        except (TypeError, ValueError):
+            return cls_to_idx.get(v, -1)
+ 
+    y_pred_idx = np.array([_to_idx(v) for v in df["pred"].values])
+    valid_pred = y_pred_idx >= 0
+    df_v       = df[valid_pred].reset_index(drop=True)
+    y_pred_idx = y_pred_idx[valid_pred]
+ 
+    has_true = df_v["has_true"].any() if "has_true" in df_v.columns else False
+    y_true_idx = (
+        np.array([_to_idx(v) for v in df_v["true"].values])
+        if has_true else None
+    )
+ 
+    sz = df_v["set_size"].values.astype(int)
+ 
+    # ── build in_set boolean matrix (n_raw, n_classes) ────────────────────────
+    n_raw  = len(df_v)
+    in_set = np.zeros((n_raw, n_classes), dtype=bool)
+    if inset_cols:
+        for col in inset_cols:
+            j = cls_to_idx.get(_parse_inset_cls(col), -1)
+            if j >= 0:
+                in_set[:, j] = df_v[col].values.astype(bool)
+    else:
+        in_set[np.arange(n_raw), y_pred_idx] = True  # fallback
+    in_set[np.arange(n_raw), y_pred_idx] = True      # always include predicted
+ 
+    # ── coverage ──────────────────────────────────────────────────────────────
+    covered_arr = (
+        in_set[np.arange(n_raw), y_true_idx]
+        if y_true_idx is not None else None
+    )
+ 
+    # ── sort: primary = set_size, secondary = predicted class ─────────────────
+    sort_key = sz * 1000 + y_pred_idx
+    order    = np.argsort(sort_key, kind="stable")
+ 
+    y_pred_s  = y_pred_idx[order]
+    y_true_s  = y_true_idx[order]  if y_true_idx  is not None else None
+    covered_s = covered_arr[order] if covered_arr is not None else None
+    in_set_s  = in_set[order]
+    sz_s      = sz[order]
+ 
+    n = min(n_show, n_raw)
+    y_pred_s  = y_pred_s[:n]
+    y_true_s  = y_true_s[:n]  if y_true_s  is not None else None
+    covered_s = covered_s[:n] if covered_s is not None else None
+    in_set_s  = in_set_s[:n]
+    sz_s      = sz_s[:n]
+ 
+    has_true = y_true_s is not None
 
-        if has_true and pd.notna(df_s["true"].iloc[i]):
-            true_cls = df_s["true"].iloc[i]
-            try:
-                true_j = list(class_names).index(true_cls)
-                rect = mpatches.FancyBboxPatch(
-                    (true_j - 0.48, i - 0.48), 0.96, 0.96,
-                    boxstyle="round,pad=0.02",
-                    linewidth=1.8, edgecolor=PALETTE["green"], facecolor="none")
-                ax.add_patch(rect)
-            except ValueError:
-                pass
+    x      = np.arange(n)
+    rng    = np.random.default_rng(0)
+    jitter = rng.uniform(-0.07, 0.07, n)
 
-        if pred_j is not None:
-            ax.plot(pred_j, i, "k^", ms=4, alpha=0.7)
+    # ── figure ────────────────────────────────────────────────────────────────
+    fig_h = max(3.0, 1.0 + n_classes * 0.7)
+    fig, ax = plt.subplots(figsize=(min(16, max(10, n / 12)), fig_h))
+    fig.patch.set_facecolor(PALETTE["background"])
+    ax.set_facecolor(PALETTE["background"])
+
+    # ── grey vertical bar = prediction set span ───────────────────────────────
+    for i in range(n):
+        cls_in = [c for c in classes_idx if in_set_s[i, c]]
+        if len(cls_in) > 1:
+            ax.plot([x[i], x[i]], [min(cls_in), max(cls_in)],
+                    color=PALETTE["in_set"], lw=2.5, zorder=1,
+                    solid_capstyle="round")
+
+    # ── grey dots: other classes in prediction set ────────────────────────────
+    for cls in classes_idx:
+        mask = in_set_s[:, cls] & (cls != y_pred_s)
+        if has_true:
+            # don't draw grey where true class will be drawn
+            mask = mask & (cls != y_true_s)
+        if mask.any():
+            ax.scatter(x[mask], np.full(mask.sum(), cls) + jitter[mask],
+                       s=45, color=PALETTE["in_set"], zorder=2,
+                       linewidths=0, alpha=0.8)
+
+    # ── predicted class (orange) ──────────────────────────────────────────────
+    ax.scatter(x, y_pred_s + jitter,
+               s=85, color=PALETTE["pred"], zorder=4,
+               label="Predicted class ŷ",
+               linewidths=0.5, edgecolors="white")
+
+    # ── true class ────────────────────────────────────────────────────────────
+    if has_true:
+        cov_m  = covered_s.astype(bool)
+        miss_m = ~cov_m
+
+        if cov_m.any():
+            ax.scatter(x[cov_m], y_true_s[cov_m] + jitter[cov_m],
+                       s=55, color=PALETTE["true_cov"], zorder=5,
+                       label=f"True (covered, n={cov_m.sum()})",
+                       linewidths=0.4, edgecolors="white")
+        if miss_m.any():
+            ax.scatter(x[miss_m], y_true_s[miss_m] + jitter[miss_m],
+                       s=80, color=PALETTE["true_miss"], marker="X", zorder=6,
+                       label=f"True (missed, n={miss_m.sum()})",
+                       linewidths=0)
+
+    # ── set-size dividers ─────────────────────────────────────────────────────
+    seen_dividers = set()
+    for sz_val in range(2, n_classes + 1):
+        first = np.where(sz_s == sz_val)[0]
+        if len(first) and sz_val not in seen_dividers:
+            xi = first[0] - 0.5
+            ax.axvline(xi, color=PALETTE["divider"], lw=1,
+                       linestyle="--", alpha=0.55)
+            ax.text(xi + 0.3, n_classes - 0.55,
+                    f"set size={sz_val}",
+                    fontsize=7, color=PALETTE["divider"], va="top")
+            seen_dividers.add(sz_val)
+
+    # ── annotation box: counts per set size ───────────────────────────────────
+    sz_labels = {1: "singleton", 2: "doubleton", n_classes: "full set"}
+    ann_lines = []
+    for sz_val in range(1, n_classes + 1):
+        cnt = (sz_s == sz_val).sum()
+        if cnt == 0:
+            continue
+        lbl = sz_labels.get(sz_val, f"size={sz_val}")
+        ann_lines.append(f"{lbl}: {cnt} ({cnt/n*100:.0f}%)")
+    ax.text(0.99, 0.03, "\n".join(ann_lines),
+            transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=7.5, family="monospace",
+            bbox=dict(boxstyle="round", fc="white", alpha=0.85))
+
+    # ── axes ──────────────────────────────────────────────────────────────────
+    ax.set_yticks(classes_idx)
+    ax.set_yticklabels(disp_labels, fontsize=9)
+    ax.set_ylabel("Class", fontsize=10)
+    ax.set_xlabel("Molecules ranked by increasing prediction set size →", fontsize=10)
+    ax.set_xlim(-1, n)
+    ax.set_ylim(-0.5, n_classes - 0.5)
+    ax.grid(True, axis="y", alpha=0.2, linestyle="--")
+    ax.legend(fontsize=8, loc="upper left", framealpha=0.9)
+
+    if has_true:
+        cov_pct = covered_s.mean() * 100
+        title = (f"{model} — Prediction sets sorted by size  "
+                 f"(α={alpha}, coverage={cov_pct:.1f}%)")
+    else:
+        title = f"{model} — Prediction sets sorted by size  (α={alpha})"
+
+    ax.set_title(
+        title + "\nGrey bar = prediction set span · "
+        "Orange = predicted · Blue/Red = true (covered/missed)",
+        fontsize=10
+    )
 
     plt.tight_layout()
-    path = out_dir / f"c1_set_heatmap_{model}.png"
+    path = out_dir / f"c1_dotplot_{model}.png"
     _savefig(fig, path)
     return path
 
@@ -932,8 +1074,522 @@ def plot_c5_setsize_by_adi(df, meta, model, alpha, out_dir, adi_col="ADI", n_bin
 
 
 # =============================================================================
-# MAIN
+# E1 — Regression exchangeability plot
 # =============================================================================
+def plot_e1_regression_exchangeability(
+    regr_excel_path, regr_pickle_path, model, alpha, out_dir
+):
+    """
+    Left  : calibration vs test nonconformity score distributions (KS test).
+    Right : conformal p-value distribution vs Uniform(0,1) (KS test).
+
+    Data sources
+    ─────────────
+    Test NCM scores     : Excel column  {model}_ncm
+    Calibration scores  : pickle["mapie"]._mapie_regressor.conformity_scores_
+    P-values            : computed here as  mean(s_cal >= s_test_i)
+    """
+    out_dir = Path(out_dir)
+
+    # ── Load pickle ────────────────────────────────────────────────────────────
+    with open(regr_pickle_path, "rb") as fh:
+        saved = pickle.load(fh)
+
+    mapie_obj = saved["mapie"]
+    # MAPIE stores the calibration conformity scores here (works for SplitConformalRegressor)
+    try:
+        scores_cal = mapie_obj._mapie_regressor.conformity_scores_
+        scores_cal = scores_cal[~np.isnan(scores_cal)]
+    except AttributeError:
+        # Fallback for older MAPIE API
+        scores_cal = mapie_obj.conformity_scores_
+        scores_cal = scores_cal[~np.isnan(scores_cal)]
+
+    # ── Load Excel ─────────────────────────────────────────────────────────────
+    df = pd.read_excel(regr_excel_path, sheet_name="Prediction Intervals")
+
+    ncm_col = f"{model}_ncm"
+    if ncm_col not in df.columns:
+        # fall back: recompute from true/pred/sigma columns if present
+        true_col  = f"{model}_true"
+        pred_col  = f"{model}_pred"
+        sigma_col = f"{model}_sigma"
+        if all(c in df.columns for c in [true_col, pred_col, sigma_col]):
+            eps = 1e-6
+            sigma_safe = np.maximum(df[sigma_col].values.astype(float), eps)
+            scores_test = (
+                np.abs(df[true_col].values.astype(float) -
+                       df[pred_col].values.astype(float)) / sigma_safe
+            )
+            display(Markdown(
+                f"Column `{ncm_col}` not found; recomputed from "
+                f"`{true_col}`, `{pred_col}`, `{sigma_col}`."
+            ))
+        else:
+            display(Markdown(
+                f"E1 skipped for {model}: no `{ncm_col}` column and cannot "
+                "recompute (missing true/pred/sigma columns)."
+            ))
+            return None
+    else:
+        scores_test = df[ncm_col].dropna().values.astype(float)
+
+    # ── Conformal p-values ─────────────────────────────────────────────────────
+    # p_i = fraction of calibration scores >= s_i  (exact conformal p-value)
+    p_values = np.array([np.mean(scores_cal >= s_i) for s_i in scores_test])
+
+    # ── KS tests ───────────────────────────────────────────────────────────────
+    ks_stat_dist,  ks_p_dist  = ks_2samp(scores_cal, scores_test)
+    uniform_ref                = np.random.default_rng(42).uniform(size=len(p_values))
+    ks_stat_pval,  ks_p_pval  = ks_2samp(p_values,   uniform_ref)
+
+    msg_dist = ("OK — no evidence of distributional shift"
+                if ks_p_dist > 0.05 else
+                "WARNING — possible shift (coverage may deviate)")
+    msg_pval = ("OK — p-values consistent with uniformity"
+                if ks_p_pval > 0.05 else
+                "WARNING — p-values not uniform (exchangeability suspect)")
+
+    display(Markdown(
+        f"### Regression exchangeability: {model}\n"
+        f"- Cal vs Test NCM scores: KS stat={ks_stat_dist:.4f}, "
+        f"p={ks_p_dist:.4f}  →  {msg_dist}\n"
+        f"- P-value uniformity:     KS stat={ks_stat_pval:.4f}, "
+        f"p={ks_p_pval:.4f}  →  {msg_pval}"
+    ))
+
+    fig, (ax_dist, ax_pval) = plt.subplots(1, 2, figsize=(12, 4))
+    fig.patch.set_facecolor(PALETTE["background"])
+
+    # Left — score distributions
+    ax_dist.hist(scores_cal,  bins="auto", density=True, alpha=0.55,
+                 color=_COLORS["CALIBRATION"], label=f"Calibration (n={len(scores_cal)})")
+    ax_dist.hist(scores_test, bins="auto", density=True, alpha=0.55,
+                 color=_COLORS["TEST"],        label=f"Test (n={len(scores_test)})")
+    ax_dist.set_xlabel("Nonconformity score  s = |y−ŷ| / σ̂(x)", fontsize=10)
+    ax_dist.set_ylabel("Density", fontsize=9)
+    ax_dist.set_title(
+        f"Cal vs Test NCM scores\n"
+        f"KS p = {ks_p_dist:.4f}  —  {msg_dist}",
+        fontsize=9
+    )
+    ax_dist.legend(fontsize=8)
+    ax_dist.grid(True, alpha=0.25, linestyle="--")
+
+    # Right — p-value uniformity
+    ax_pval.hist(p_values, bins=20, density=True, alpha=0.7,
+                 color=_COLORS["TEST"], label=f"Conformal p-values (n={len(p_values)})")
+    ax_pval.axhline(1.0, color="red", linestyle="--", lw=2,
+                    label="Uniform(0,1) reference")
+    ax_pval.set_xlabel("Conformal p-value  p_i = #{s_cal ≥ s_i} / n_cal", fontsize=10)
+    ax_pval.set_ylabel("Density", fontsize=9)
+    ax_pval.set_title(
+        f"P-value uniformity (KS vs Uniform)\n"
+        f"KS p = {ks_p_pval:.4f}  —  {msg_pval}",
+        fontsize=9
+    )
+    ax_pval.set_xlim(0, 1)
+    ax_pval.legend(fontsize=8)
+    ax_pval.grid(True, alpha=0.25, linestyle="--")
+
+    plt.suptitle(
+        f"{model} — Exchangeability diagnostics  (α={alpha})\n"
+        "Calibration and test should be exchangeable for the CP guarantee to hold.",
+        fontsize=11
+    )
+    plt.tight_layout()
+
+    path = out_dir / f"e1_exchangeability_regr_{model}.png"
+    _savefig(fig, path)
+    return path
+
+
+def _get_cal_scores_classifier(mapie_obj):
+    """
+    Extract calibration conformity scores from SplitConformalClassifier.
+    Correct path (confirmed by introspection):
+      mapie._mapie_classifier.conformity_scores_   shape (n_cal, 1)
+    Returns 1-D array.
+    """
+    raw = mapie_obj._mapie_classifier.conformity_scores_
+    return raw.squeeze()
+
+
+def _recompute_test_scores(saved, df_excel, model, cache_path):
+    """
+    Compute test LAC scores: s_i = 1 - p_pseudo(y_true_i | x_i).
+
+    Route A — tutorial Excel (has pseudo_p_* columns):
+        No ECFP recomputation needed.
+
+    Route B — main-pipeline Excel (has in_set_class_* columns):
+        Reconstruct pseudo-probabilities from the NCM distance model
+        already stored in the pickle + ECFP fingerprints.
+        Requires Smiles column + cache_path.
+
+    Route C — in_set_class_* + true label available (no ECFP needed):
+        Use 1 - in_set score proxy: s_i = 1 - p_pseudo derived from
+        saved calibration quantile.  Approximate but avoids cache_path.
+        Used as fallback when cache_path is None.
+
+    Returns
+    -------
+    scores_test   : 1-D float array  (n_test,)
+    y_true_mapped : 1-D int array    (n_test,)  contiguous class indices
+    class_order   : list of original class labels (for display)
+    route         : str
+    """
+    sigma_model   = saved["sigma_model"]
+    ncm_type      = saved["ncm"]
+    classes       = saved["classes"]           # contiguous 0-based ints
+    classes_orig  = saved["classes_original"]
+    class_to_map  = saved["class_to_mapped"]
+    mapped_to_cls = saved["mapped_to_class"]
+
+    # ── detect true-label column ───────────────────────────────────────────────
+    true_col_candidates = [f"{model}_true", "True", "true", "Experimental", "Exp", "exp"]
+    true_col = next((c for c in true_col_candidates if c in df_excel.columns), None)
+    has_true = true_col is not None and df_excel[true_col].notna().any()
+
+    # ── Route A: tutorial Excel with pseudo_p_* columns ───────────────────────
+    pseudo_cols = [c for c in df_excel.columns if "pseudo_p_" in c.lower()]
+
+    if pseudo_cols and has_true:
+        display(Markdown(
+            f"  Route A: reconstructing test scores from `pseudo_p_*` columns."
+        ))
+
+        def _parse_cls(col):
+            sfx = col.lower().split("pseudo_p_")[-1]
+            try:
+                return int(sfx)
+            except ValueError:
+                return sfx
+
+        col_cls_order = [_parse_cls(c) for c in pseudo_cols]
+        cls_to_col    = {cls: i for i, cls in enumerate(col_cls_order)}
+
+        y_true_raw = df_excel[true_col].dropna().values
+        proba_mat  = df_excel[pseudo_cols].values.astype(float)
+
+        valid = np.array([y in cls_to_col for y in y_true_raw])
+        y_tv  = y_true_raw[valid]
+        pp_v  = proba_mat[valid]
+        col_i = np.array([cls_to_col[y] for y in y_tv])
+        scores_test   = 1.0 - pp_v[np.arange(len(y_tv)), col_i]
+        y_true_mapped = np.array([class_to_map.get(y, -1) for y in y_tv])
+        return scores_test, y_true_mapped, list(classes_orig), "tutorial_pseudo_p"
+
+    # ── Route B: main-pipeline Excel — recompute via ECFP ─────────────────────
+    inset_cols = [c for c in df_excel.columns if c.startswith("in_set_class_")]
+    if not has_true:
+        raise RuntimeError(
+            "Cannot compute test LAC scores without true labels. "
+            f"Tried columns: {true_col_candidates}"
+        )
+
+    pred_candidates = [f"{model}_pred", "pred", "Pred", "Predicted"]
+    pred_col = next((c for c in pred_candidates if c in df_excel.columns), None)
+    if pred_col is None:
+        raise RuntimeError(f"No prediction column found. Tried: {pred_candidates}")
+
+    def _map(v):
+        try:
+            return class_to_map.get(int(float(v)), class_to_map.get(v, -1))
+        except (TypeError, ValueError):
+            return class_to_map.get(v, -1)
+
+    df_v          = df_excel.dropna(subset=[true_col, pred_col]).reset_index(drop=True)
+    y_true_mapped = np.array([_map(v) for v in df_v[true_col].values])
+    y_pred_mapped = np.array([_map(v) for v in df_v[pred_col].values])
+    valid         = (y_true_mapped >= 0) & (y_pred_mapped >= 0)
+    df_v          = df_v[valid].reset_index(drop=True)
+    y_true_mapped = y_true_mapped[valid]
+    y_pred_mapped = y_pred_mapped[valid]
+
+    # ── Route C: in_set_class_* columns available → no ECFP needed ────────────
+    # Proxy LAC score: s_i = 1 - pseudo_p_{true}  approximated as:
+    #   if true class is in prediction set  → s_i ~ 0  (well-conforming)
+    #   if true class not in set            → s_i ~ 1  (non-conforming)
+    # This is a binary approximation but sufficient for the KS / uniformity test.
+    if inset_cols and (cache_path is None):
+        display(Markdown(
+            "  Route C: using `in_set_class_*` columns (cache_path not provided). "
+            "Binary proxy scores — sufficient for KS test."
+        ))
+        def _parse_inset(col):
+            sfx = col.replace("in_set_class_", "")
+            try:
+                v = float(sfx); return int(v) if v == int(v) else v
+            except ValueError:
+                return sfx
+
+        inset_cls_order = [_parse_inset(c) for c in inset_cols]
+        inset_to_j      = {c: i for i, c in enumerate(inset_cls_order)}
+
+        n_v       = len(df_v)
+        in_set_m  = np.zeros((n_v, len(inset_cls_order)), dtype=bool)
+        for col in inset_cols:
+            j = inset_to_j.get(_parse_inset(col), -1)
+            if j >= 0:
+                in_set_m[:, j] = df_v[col].values.astype(bool)
+
+        # map true label to inset column index
+        inset_cls_mapped = {_map(c): i for c, i in inset_to_j.items()}
+        scores_test = np.array([
+            0.0 if (y_true_mapped[i] in inset_cls_mapped
+                    and in_set_m[i, inset_cls_mapped[y_true_mapped[i]]])
+            else 1.0
+            for i in range(n_v)
+        ])
+        return scores_test, y_true_mapped, list(classes_orig), "inset_binary_proxy"
+
+    # ── Route B proper: ECFP recompute ────────────────────────────────────────
+    if cache_path is None:
+        raise RuntimeError(
+            "cache_path is None and no in_set_class_* columns found. "
+            "Pass cache_path (e.g. products/qubounds_output/mapie/ecfp4_cache.db) "
+            "as a parameter to the pipeline task."
+        )
+    display(Markdown("  Route B: recomputing via ECFP + NCM model."))
+
+    smiles_col = next(
+        (c for c in ["Smiles", "SMILES", "smiles"] if c in df_excel.columns), None
+    )
+    if smiles_col is None:
+        raise RuntimeError("No Smiles column found in Excel for Route B.")
+
+    df_v = df_v.loc[df_v[smiles_col].notna()].reset_index(drop=True)
+    y_true_mapped = y_true_mapped[df_v.index] if len(df_v) < n_v else y_true_mapped
+    y_pred_mapped = y_pred_mapped[df_v.index] if len(df_v) < n_v else y_pred_mapped
+
+    from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+    from qubounds.mapie_class_lac import NCMProbabilisticClassifier
+
+    init_cache(cache_path)
+    X_test = np.array([smiles_to_ecfp_cached(s) for s in df_v[smiles_col].values])
+
+    ncm_est = NCMProbabilisticClassifier(
+        y_pred    = y_pred_mapped,
+        ncm_model = sigma_model,
+        ncm_type  = ncm_type,
+        classes   = classes,
+    )
+    ncm_est.fit()
+    pseudo_proba = ncm_est.predict_proba(X_test)
+    scores_test  = 1.0 - pseudo_proba[np.arange(len(y_true_mapped)), y_true_mapped]
+
+    return scores_test, y_true_mapped, list(classes_orig), "ecfp_recompute"
+
+
+# =============================================================================
+# E2 — Classification exchangeability
+# =============================================================================
+def plot_e2_classification_exchangeability(
+    class_excel_path,
+    class_pickle_path,
+    model,
+    alpha,
+    out_dir,
+    cache_path=None,
+):
+    """
+    Overall panel (cal vs test score distributions + p-value uniformity)
+    + class-wise p-value histograms (one per class, KS vs Uniform).
+
+    Parameters
+    ----------
+    class_excel_path  : path to Excel written by mapiec.py or tutorial task.
+    class_pickle_path : path to .pkl written by train_conformal_classifier_hard().
+    model             : VEGA model name / column prefix (e.g. "MUTA_CAESAR").
+    alpha             : miscoverage level used at training time (annotation only).
+    out_dir           : directory for output PNGs.
+    cache_path        : ECFP SQLite cache (required for main-pipeline route B).
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── pickle ─────────────────────────────────────────────────────────────────
+    with open(class_pickle_path, "rb") as fh:
+        saved = pickle.load(fh)
+
+    print(class_pickle_path, saved)
+    if saved.get("skipped") or saved.get("mapie") is None:
+        display(Markdown(f"E2 skipped for {model}: pickle contains no MAPIE object."))
+        return None, None
+
+    mapie_obj = saved["mapie"]
+
+    # ── calibration scores ─────────────────────────────────────────────────────
+    try:
+        scores_cal = _get_cal_scores_classifier(mapie_obj)
+    except AttributeError as exc:
+        display(Markdown(
+            f"E2 skipped for {model}: "
+            f"cannot read calibration scores from pickle — {exc}\n"
+            "Expected attribute: `mapie._mapie_classifier.conformity_scores_`"
+        ))
+        return None, None
+
+    display(Markdown(
+        f"  Calibration scores: n={len(scores_cal)}, "
+        f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
+    ))
+
+    # ── test LAC scores ─────────────────────────────────────────────────────────
+    df = pd.read_excel(class_excel_path, sheet_name="Prediction Intervals")
+    display(Markdown(f"  Excel columns: `{list(df.columns)}`"))
+
+    try:
+        scores_test, y_true_mapped, class_order, route = _recompute_test_scores(
+            saved, df, model, cache_path
+        )
+    except Exception as exc:
+        display(Markdown(
+            f"E2 skipped for {model}: cannot compute test scores — {exc}"
+        ))
+        return None, None
+
+    display(Markdown(
+        f"  Test scores: n={len(scores_test)}, "
+        f"range=[{scores_test.min():.3f}, {scores_test.max():.3f}]  "
+        f"(route: {route})"
+    ))
+
+    # ── conformal p-values ─────────────────────────────────────────────────────
+    p_values = np.array([np.mean(scores_cal >= s_i) for s_i in scores_test])
+
+    # ── KS tests ───────────────────────────────────────────────────────────────
+    rng = np.random.default_rng(42)
+    ks_stat_dist, ks_p_dist = ks_2samp(scores_cal, scores_test)
+    ks_stat_pval, ks_p_pval = ks_2samp(p_values, rng.uniform(size=len(p_values)))
+
+    msg_dist = "OK" if ks_p_dist > 0.05 else "WARNING — possible distributional shift"
+    msg_pval = "OK" if ks_p_pval > 0.05 else "WARNING — p-values not uniform"
+
+    display(Markdown(
+        f"### {model}  exchangeability diagnostics\n"
+        f"- Cal vs Test LAC scores : KS stat={ks_stat_dist:.4f}  "
+        f"p={ks_p_dist:.4f}  →  {msg_dist}\n"
+        f"- P-value uniformity     : KS stat={ks_stat_pval:.4f}  "
+        f"p={ks_p_pval:.4f}  →  {msg_pval}"
+    ))
+
+    # ── PANEL 1: overall ───────────────────────────────────────────────────────
+    fig_ov, (ax_dist, ax_pval) = plt.subplots(1, 2, figsize=(12, 4))
+    fig_ov.patch.set_facecolor(PALETTE["background"])
+
+    ax_dist.hist(scores_cal,  bins="auto", density=True, alpha=0.55,
+                 color=_COLORS["CALIBRATION"],
+                 label=f"Calibration (n={len(scores_cal)})")
+    ax_dist.hist(scores_test, bins="auto", density=True, alpha=0.55,
+                 color=_COLORS["TEST"],
+                 label=f"Test (n={len(scores_test)})")
+    ax_dist.set_xlabel("LAC score  1 − p̂(true class | x)", fontsize=10)
+    ax_dist.set_ylabel("Density", fontsize=9)
+    ax_dist.set_title(
+        f"Cal vs Test LAC scores\nKS p = {ks_p_dist:.4f}  —  {msg_dist}",
+        fontsize=9
+    )
+    ax_dist.legend(fontsize=8)
+    ax_dist.grid(True, alpha=0.25, linestyle="--")
+
+    ax_pval.hist(p_values, bins=20, density=True, alpha=0.7,
+                 color=_COLORS["TEST"],
+                 label=f"Conformal p-values (n={len(p_values)})")
+    ax_pval.axhline(1.0, color="red", linestyle="--", lw=2,
+                    label="Uniform(0,1) reference")
+    ax_pval.set_xlabel("p_i = #{s_cal ≥ s_i} / n_cal", fontsize=10)
+    ax_pval.set_ylabel("Density", fontsize=9)
+    ax_pval.set_title(
+        f"P-value uniformity  (KS vs Uniform)\n"
+        f"KS p = {ks_p_pval:.4f}  —  {msg_pval}",
+        fontsize=9
+    )
+    ax_pval.set_xlim(0, 1)
+    ax_pval.legend(fontsize=8)
+    ax_pval.grid(True, alpha=0.25, linestyle="--")
+
+    plt.suptitle(
+        f"{model} — Classification exchangeability  (α={alpha})  [Overall]",
+        fontsize=11
+    )
+    plt.tight_layout()
+    path_ov = out_dir / f"e2_exchangeability_class_overall_{model}.png"
+    _savefig(fig_ov, path_ov)
+
+    # ── PANEL 2: class-wise p-value histograms ─────────────────────────────────
+    unique_cls = np.unique(y_true_mapped[y_true_mapped >= 0])
+    if len(unique_cls) < 2:
+        display(Markdown(
+            "Class-wise panel skipped: fewer than 2 classes in test set."
+        ))
+        return path_ov, None
+
+    mapped_to_orig = saved.get("mapped_to_class", {})
+    ncols  = min(len(unique_cls), 4)
+    nrows  = int(np.ceil(len(unique_cls) / ncols))
+    fig_cls, axes_cls = plt.subplots(
+        nrows, ncols, figsize=(ncols * 3.5, nrows * 3.2), squeeze=False
+    )
+    fig_cls.patch.set_facecolor(PALETTE["background"])
+
+    ks_rows = []
+    for idx, cls_m in enumerate(unique_cls):
+        ax      = axes_cls[idx // ncols][idx % ncols]
+        mask_c  = y_true_mapped == cls_m
+        p_cls   = p_values[mask_c]
+        cls_lbl = mapped_to_orig.get(int(cls_m), cls_m)
+
+        if len(p_cls) < 5:
+            ax.set_title(f"Class {cls_lbl}\ntoo few (n={len(p_cls)})", fontsize=8)
+            ax.axis("off")
+            continue
+
+        uni_c          = rng.uniform(size=len(p_cls))
+        ks_c, ks_p_c   = ks_2samp(p_cls, uni_c)
+        ok_c           = ks_p_c > 0.05
+        ks_rows.append({
+            "class":   cls_lbl,
+            "n":       len(p_cls),
+            "KS_stat": round(ks_c, 4),
+            "KS_p":    round(ks_p_c, 4),
+            "status":  "OK" if ok_c else "WARNING",
+        })
+
+        color_c = PALETTE["green"] if ok_c else PALETTE["missed"]
+        ax.hist(p_cls, bins=10, density=True, alpha=0.75, color=color_c)
+        ax.axhline(1.0, color="red", linestyle="--", lw=1.8, label="Uniform(0,1)")
+        ax.set_title(
+            f"Class {cls_lbl}  (n={len(p_cls)})\n"
+            f"KS p = {ks_p_c:.3f}  {'✓ OK' if ok_c else '⚠ WARNING'}",
+            fontsize=8
+        )
+        ax.set_xlim(0, 1)
+        ax.set_xlabel("Conformal p-value", fontsize=7)
+        ax.set_ylabel("Density", fontsize=7)
+        ax.grid(True, alpha=0.25, linestyle="--")
+        ax.legend(fontsize=6)
+
+    for idx in range(len(unique_cls), nrows * ncols):
+        axes_cls[idx // ncols][idx % ncols].axis("off")
+
+    plt.suptitle(
+        f"{model} — Class-wise p-value uniformity  (α={alpha})\n"
+        "Green = exchangeability OK   Red = possible violation",
+        fontsize=10
+    )
+    plt.tight_layout()
+    path_cls = out_dir / f"e2_exchangeability_class_classwise_{model}.png"
+    _savefig(fig_cls, path_cls)
+
+    if ks_rows:
+        display(Markdown("#### Class-wise KS test summary"))
+        display(pd.DataFrame(ks_rows))
+
+    return path_ov, path_cls
+
+# MAIN
 
 produced_plots = []
 
@@ -960,27 +1616,17 @@ if model_type == "regression":
             plot_r3_width_by_adi(df_regr, meta, regr_model, alpha, out_dir))
         produced_plots.append(
             plot_r4_sigma_vs_width(df_regr, meta, regr_model, alpha, out_dir))
-"""
-        # R5: two-model contrast
-        if regr_model_b is not None:
-            _path_b = regr_data[1] if isinstance(regr_data, list) and len(regr_data) > 1 \
-                    else _path_a.replace(regr_model, regr_model_b)
-            try:
-                df_regr_b = _load_regr(_path_b, regr_model_b)
-                # Order so the tighter model is on the left (more visually clear)
-                if df_regr_b["width"].mean() < df_regr["width"].mean():
-                    produced_plots.append(
-                        plot_r5_contrast(df_regr_b, regr_model_b,
-                                        df_regr,   regr_model,
-                                        alpha, n_show, out_dir_regr))
-                else:
-                    produced_plots.append(
-                        plot_r5_contrast(df_regr,   regr_model,
-                                        df_regr_b, regr_model_b,
-                                        alpha, n_show, out_dir_regr))
-            except Exception as e:
-                display(Markdown(f"R5 skipped: could not load second dataset — {e}"))
-"""                  
+
+        model_pickle =  upstream["mapie_*"][f"mapie_{regr_model}_{ncm}"]["ncmodel"]
+        if model_pickle is not None:
+             display(Markdown(f"# Exchangeability — {regr_model}"))
+             plot_e1_regression_exchangeability(
+                 regr_excel_path  = _path_a,
+                 regr_pickle_path = model_pickle,
+                 model  = regr_model,
+                 alpha  = alpha,
+                 out_dir = out_dir,
+             )
 
 # ── Classification plots ──────────────────────────────────────────────────────
 if model_type == "classification":
@@ -996,7 +1642,9 @@ if model_type == "classification":
                         f"Columns: `{list(df_class.columns)}`"))
 
         produced_plots.append(
-            plot_c1_set_heatmap(df_class, meta, class_model, alpha, out_dir))
+            plot_c1_dotplot(df_class, meta, class_model, alpha, out_dir))
+        
+        """
         produced_plots.append(
             plot_c2_setsize_by_class(df_class, meta, class_model, alpha, out_dir))
         produced_plots.append(
@@ -1005,6 +1653,20 @@ if model_type == "classification":
             plot_c4_confusion_setsize(df_class, meta, class_model, alpha, out_dir))
         produced_plots.append(
             plot_c5_setsize_by_adi(df_class, meta, class_model, alpha, out_dir))
+        """
+
+        model_pickle =  upstream["mapiec_*"][f"mapiec_{class_model}_{ncm}"]["ncmodel"]
+        if model_pickle is not None:
+            display(Markdown(f"# Exchangeability — {class_model}"))
+            plot_e2_classification_exchangeability(
+                class_excel_path  = class_data,
+                class_pickle_path = model_pickle,
+                model      = class_model,
+                alpha      = alpha,
+                out_dir    = out_dir,
+                cache_path = cache_path,   # None → uses Route C (in_set proxy)
+            )
+        
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 display(Markdown("## Plots produced"))
