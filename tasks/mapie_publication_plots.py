@@ -1334,7 +1334,25 @@ def _recompute_test_scores(saved, df_excel, model, cache_path):
         y_true_mapped = np.array([class_to_map.get(y, -1) for y in y_tv])
         return scores_test, y_true_mapped, list(classes_orig), "tutorial_pseudo_p"
 
-    # ── Route B: main-pipeline Excel — recompute via ECFP ─────────────────────
+
+    def _map(v):
+        try:
+            return class_to_map.get(int(float(v)), class_to_map.get(v, -1))
+        except (TypeError, ValueError):
+            return class_to_map.get(v, -1)
+
+    # ── Route C: {tag}_lac_score_true — exact, no ECFP, check BEFORE Route B preamble ──
+    lac_col = f"{model}_lac_score_true"
+    if lac_col in df_excel.columns and has_true:
+        display(Markdown(f"  Route C: reading exact LAC scores from `{lac_col}` column."))
+        df_lac        = df_excel[[true_col, lac_col]].dropna().reset_index(drop=True)
+        y_true_mapped = np.array([_map(v) for v in df_lac[true_col].values])
+        valid_lac     = y_true_mapped >= 0
+        scores_test   = df_lac.loc[valid_lac, lac_col].values.astype(float)
+        y_true_mapped = y_true_mapped[valid_lac]
+        return scores_test, y_true_mapped, list(classes_orig), "excel_lac_score_true"
+
+    # ── Route B preamble: build df_v, y_true_mapped, y_pred_mapped ────────────────
     inset_cols = [c for c in df_excel.columns if c.startswith("in_set_class_")]
     if not has_true:
         raise RuntimeError(
@@ -1347,11 +1365,6 @@ def _recompute_test_scores(saved, df_excel, model, cache_path):
     if pred_col is None:
         raise RuntimeError(f"No prediction column found. Tried: {pred_candidates}")
 
-    def _map(v):
-        try:
-            return class_to_map.get(int(float(v)), class_to_map.get(v, -1))
-        except (TypeError, ValueError):
-            return class_to_map.get(v, -1)
 
     df_v          = df_excel.dropna(subset=[true_col, pred_col]).reset_index(drop=True)
     y_true_mapped = np.array([_map(v) for v in df_v[true_col].values])
@@ -1361,22 +1374,7 @@ def _recompute_test_scores(saved, df_excel, model, cache_path):
     y_true_mapped = y_true_mapped[valid]
     y_pred_mapped = y_pred_mapped[valid]
 
-   # ── Route C: {tag}_lac_score_true column in "Prediction Intervals" ────────
-    # Written by predict_conformal_classifier_hard_chunked() after the patch.
-    # Exact LAC scores, no ECFP needed, always preferred over binary proxy.
-    lac_col = f"{model}_lac_score_true"
-    if lac_col in df_excel.columns and has_true:
-        display(Markdown(
-            f"  Route C: reading exact LAC scores from `{lac_col}` column."
-        ))
-        df_lac        = df_excel.dropna(subset=[true_col, lac_col]).reset_index(drop=True)
-        y_true_mapped = np.array([_map(v) for v in df_lac[true_col].values])
-        valid_lac     = y_true_mapped >= 0
-        scores_test   = df_lac.loc[valid_lac, lac_col].values.astype(float)
-        y_true_mapped = y_true_mapped[valid_lac]
-        return scores_test, y_true_mapped, list(classes_orig), "excel_lac_score_true"
- 
-    # ── Route D: in_set_class_* binary proxy (last resort) ───────────────────
+   # ── Route D: in_set_class_* binary proxy (last resort) ───────────────────
     # Approximate: 0 if true class in prediction set, 1 if not.
     # Works without re-running mapiec.py but gives binary not continuous scores.
     if inset_cols:
