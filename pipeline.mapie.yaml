@@ -279,6 +279,7 @@ tasks:
       n_show:      1000
       model_type: "regression"
       data: "{{vega_regr}}"
+      cache_path: "{{CP_MODELS}}/mapie/ecfp4_cache.db"
     grid:      
       ncm:  ["rlgbmecfp"]
 
@@ -295,5 +296,6 @@ tasks:
       n_show:      1000
       model_type: "classification"
       data: "{{vega_class}}"
+      cache_path: "{{CP_MODELS}}/mapie/ecfp4_cache.db"
     grid:
       ncm:  ["cgbecfp"]
