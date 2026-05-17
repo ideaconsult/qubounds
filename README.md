@@ -90,6 +90,8 @@ qubounds_clean/
 
 The adaptive variant achieves molecule-specific interval widths: wider for structurally novel compounds, narrower for well-represented chemical space.
 
+![FATHEAD_EPA](regression_demo.png "FATHEAD_EPA regression model")
+
 ### Classification
 
 Two approaches are implemented and compared in the tutorial:
@@ -109,6 +111,8 @@ LAC is then applied to the pseudo-probabilities. **Coverage is guaranteed regard
 | **Prediction set** | `C(x) = {y : p̂(y\|x) ≥ 1 − q̂}` |
 | **Coverage guarantee** | Marginal coverage ≥ 1−α |
 | **Efficiency metric** | Mean set size; singleton rate (fraction of size-1 sets) |
+
+![FISH_IRFMN](classification_demo.png "FISH_IRFMN classification model")
 
 ---
 
