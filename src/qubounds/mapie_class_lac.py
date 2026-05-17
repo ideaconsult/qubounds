@@ -569,12 +569,33 @@ def predict_conformal_classifier_hard_chunked(
             ncm_probs_zero = None
 
         # ---- MAPIE prediction sets ----
-        mapie.estimator_.y_pred = y_pred
-        # Unpack tuple here as well
-        _, y_pred_sets = mapie.predict_set(X_ecfp)
 
+        # ---- MAPIE prediction sets ----
+        mapie.estimator_.y_pred = y_pred
+        _, y_pred_sets = mapie.predict_set(X_ecfp)
+ 
         if y_pred_sets.ndim == 3:
             y_pred_sets = np.squeeze(y_pred_sets, axis=2)
+ 
+        # ---- LAC conformity scores (exchangeability diagnostics) ----
+        # pseudo_proba is already computed inside predict_set above;
+        # we recompute it here explicitly so we can surface per-molecule scores.
+        # No extra ECFP call — X_ecfp and estimator_.y_pred are already set.
+        #
+        # lac_score_pred : 1 - p_pseudo(y_pred | x)   — always available.
+        #   This mirrors the quantity MAPIE computes internally during
+        #   conformalize(), so cal and test are on the same scale.
+        # lac_score_true : 1 - p_pseudo(y_true | x)   — NaN where true unknown.
+        #   This is the "real" nonconformity score used for the guarantee.
+        pseudo_proba_chunk = mapie.estimator_.predict_proba(X_ecfp)  # (n, n_classes)
+        lac_score_pred = 1.0 - pseudo_proba_chunk[np.arange(len(y_pred)), y_pred]
+        lac_score_true = np.full(len(y_pred), np.nan)
+        if has_true:
+            for k, yt in enumerate(y_true_orig):
+                mapped = class_to_mapped.get(yt, -1)
+                if 0 <= mapped < pseudo_proba_chunk.shape[1]:
+                    lac_score_true[k] = 1.0 - pseudo_proba_chunk[k, mapped]
+ 
 
         # ---- decode prediction sets ----
         set_sizes = y_pred_sets.sum(axis=1)
@@ -642,6 +663,8 @@ def predict_conformal_classifier_hard_chunked(
             ],
             "In_Coverage": coverage_full if has_true else None,
             "Smiles": smiles,
+            f"{tag}_lac_score_pred": lac_score_pred,   # <-- ADD
+            f"{tag}_lac_score_true": lac_score_true,   # <-- ADD
         }
 
         if has_true:

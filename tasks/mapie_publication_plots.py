@@ -1076,129 +1076,183 @@ def plot_c5_setsize_by_adi(df, meta, model, alpha, out_dir, adi_col="ADI", n_bin
 # =============================================================================
 # E1 — Regression exchangeability plot
 # =============================================================================
+def _load_ncm_scores_from_excel(excel_path, model):
+    """
+    Load regression calibration nonconformity scores from the Excel.
+ 
+    Priority
+    --------
+    1. Sheet "Calibration"  — exact scores used by MAPIE for the quantile.
+    2. Sheet "Training"     — used when calibration sheet is absent.
+    3. Recompute from {model}_true / _pred / _sigma in whichever sheet matched.
+ 
+    Returns (scores_1d_float_array, sheet_name_string)
+    Raises RuntimeError if nothing works.
+    """
+    xl      = pd.ExcelFile(excel_path)
+    ncm_col = f"{model}_ncm"
+ 
+    for sheet in ["Calibration", "Training"]:
+        if sheet not in xl.sheet_names:
+            continue
+        df_s = pd.read_excel(excel_path, sheet_name=sheet)
+ 
+        # Direct column
+        if ncm_col in df_s.columns:
+            scores = df_s[ncm_col].dropna().values.astype(float)
+            if len(scores) > 0:
+                return scores, sheet
+ 
+        # Recompute from true / pred / sigma
+        true_col  = f"{model}_true"
+        pred_col  = f"{model}_pred"
+        sigma_col = f"{model}_sigma"
+        if all(c in df_s.columns for c in [true_col, pred_col, sigma_col]):
+            eps        = 1e-6
+            sigma_safe = np.maximum(df_s[sigma_col].values.astype(float), eps)
+            scores     = (
+                np.abs(df_s[true_col].values.astype(float) -
+                       df_s[pred_col].values.astype(float)) / sigma_safe
+            )
+            scores = scores[np.isfinite(scores)]
+            if len(scores) > 0:
+                return scores, f"{sheet} (recomputed)"
+ 
+    raise RuntimeError(
+        f"No calibration NCM scores found for '{model}' in {excel_path}. "
+        "Expected a 'Calibration' or 'Training' sheet with a "
+        f"'{ncm_col}' column, or '{model}_true'/'{model}_pred'/'{model}_sigma' columns."
+    )
+ 
+ 
 def plot_e1_regression_exchangeability(
     regr_excel_path, regr_pickle_path, model, alpha, out_dir
 ):
     """
     Left  : calibration vs test nonconformity score distributions (KS test).
     Right : conformal p-value distribution vs Uniform(0,1) (KS test).
-
-    Data sources
-    ─────────────
-    Test NCM scores     : Excel column  {model}_ncm
-    Calibration scores  : pickle["mapie"]._mapie_regressor.conformity_scores_
-    P-values            : computed here as  mean(s_cal >= s_test_i)
+ 
+    Cal scores  : Excel "Calibration" sheet  {model}_ncm
+                  → fallback Excel "Training" sheet
+                  → fallback pickle _mapie_regressor.conformity_scores_
+    Test scores : Excel "Prediction Intervals" sheet  {model}_ncm
+                  → fallback recomputed from true/pred/sigma
     """
     out_dir = Path(out_dir)
-
-    # ── Load pickle ────────────────────────────────────────────────────────────
-    with open(regr_pickle_path, "rb") as fh:
-        saved = pickle.load(fh)
-
-    mapie_obj = saved["mapie"]
-    # MAPIE stores the calibration conformity scores here (works for SplitConformalRegressor)
+ 
+    # ── Calibration scores: Excel first, pickle last ───────────────────────────
     try:
-        scores_cal = mapie_obj._mapie_regressor.conformity_scores_
-        scores_cal = scores_cal[~np.isnan(scores_cal)]
-    except AttributeError:
-        # Fallback for older MAPIE API
-        scores_cal = mapie_obj.conformity_scores_
-        scores_cal = scores_cal[~np.isnan(scores_cal)]
-
-    # ── Load Excel ─────────────────────────────────────────────────────────────
-    df = pd.read_excel(regr_excel_path, sheet_name="Prediction Intervals")
-
+        scores_cal, cal_source = _load_ncm_scores_from_excel(regr_excel_path, model)
+        display(Markdown(
+            f"  Cal scores from Excel sheet '{cal_source}': n={len(scores_cal)}, "
+            f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
+        ))
+    except RuntimeError as exc_excel:
+        display(Markdown(
+            f"  Excel cal scores unavailable ({exc_excel}); trying pickle."
+        ))
+        try:
+            with open(regr_pickle_path, "rb") as fh:
+                saved = pickle.load(fh)
+            raw        = saved["mapie"]._mapie_regressor.conformity_scores_
+            scores_cal = raw[~np.isnan(raw)]
+            cal_source = "pickle"
+            display(Markdown(
+                f"  Cal scores from pickle: n={len(scores_cal)}, "
+                f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
+            ))
+        except Exception as exc_pkl:
+            display(Markdown(
+                f"E1 skipped for {model}: cannot load calibration scores — {exc_pkl}"
+            ))
+            return None
+ 
+    # ── Test scores from "Prediction Intervals" sheet ─────────────────────────
+    df      = pd.read_excel(regr_excel_path, sheet_name="Prediction Intervals")
     ncm_col = f"{model}_ncm"
-    if ncm_col not in df.columns:
-        # fall back: recompute from true/pred/sigma columns if present
+ 
+    if ncm_col in df.columns:
+        scores_test = df[ncm_col].dropna().values.astype(float)
+    else:
         true_col  = f"{model}_true"
         pred_col  = f"{model}_pred"
         sigma_col = f"{model}_sigma"
         if all(c in df.columns for c in [true_col, pred_col, sigma_col]):
-            eps = 1e-6
-            sigma_safe = np.maximum(df[sigma_col].values.astype(float), eps)
+            eps         = 1e-6
+            sigma_safe  = np.maximum(df[sigma_col].values.astype(float), eps)
             scores_test = (
                 np.abs(df[true_col].values.astype(float) -
                        df[pred_col].values.astype(float)) / sigma_safe
             )
             display(Markdown(
-                f"Column `{ncm_col}` not found; recomputed from "
-                f"`{true_col}`, `{pred_col}`, `{sigma_col}`."
+                f"Test `{ncm_col}` not found; recomputed from true/pred/sigma."
             ))
         else:
             display(Markdown(
-                f"E1 skipped for {model}: no `{ncm_col}` column and cannot "
-                "recompute (missing true/pred/sigma columns)."
+                f"E1 skipped for {model}: no `{ncm_col}` in 'Prediction Intervals' "
+                "and cannot recompute (true/pred/sigma columns missing)."
             ))
             return None
-    else:
-        scores_test = df[ncm_col].dropna().values.astype(float)
-
+ 
     # ── Conformal p-values ─────────────────────────────────────────────────────
-    # p_i = fraction of calibration scores >= s_i  (exact conformal p-value)
     p_values = np.array([np.mean(scores_cal >= s_i) for s_i in scores_test])
-
+ 
     # ── KS tests ───────────────────────────────────────────────────────────────
-    ks_stat_dist,  ks_p_dist  = ks_2samp(scores_cal, scores_test)
-    uniform_ref                = np.random.default_rng(42).uniform(size=len(p_values))
-    ks_stat_pval,  ks_p_pval  = ks_2samp(p_values,   uniform_ref)
-
+    rng = np.random.default_rng(42)
+    ks_stat_dist, ks_p_dist = ks_2samp(scores_cal, scores_test)
+    ks_stat_pval, ks_p_pval = ks_2samp(p_values, rng.uniform(size=len(p_values)))
+ 
     msg_dist = ("OK — no evidence of distributional shift"
                 if ks_p_dist > 0.05 else
                 "WARNING — possible shift (coverage may deviate)")
     msg_pval = ("OK — p-values consistent with uniformity"
                 if ks_p_pval > 0.05 else
                 "WARNING — p-values not uniform (exchangeability suspect)")
-
+ 
     display(Markdown(
-        f"### Regression exchangeability: {model}\n"
-        f"- Cal vs Test NCM scores: KS stat={ks_stat_dist:.4f}, "
-        f"p={ks_p_dist:.4f}  →  {msg_dist}\n"
-        f"- P-value uniformity:     KS stat={ks_stat_pval:.4f}, "
-        f"p={ks_p_pval:.4f}  →  {msg_pval}"
+        f"### Regression exchangeability: {model}  (cal from: {cal_source})\n"
+        f"- Cal vs Test NCM: KS stat={ks_stat_dist:.4f}, p={ks_p_dist:.4f}  →  {msg_dist}\n"
+        f"- P-value unif.:   KS stat={ks_stat_pval:.4f}, p={ks_p_pval:.4f}  →  {msg_pval}"
     ))
-
+ 
+    # ── Plot ──────────────────────────────────────────────────────────────────
     fig, (ax_dist, ax_pval) = plt.subplots(1, 2, figsize=(12, 4))
     fig.patch.set_facecolor(PALETTE["background"])
-
-    # Left — score distributions
+ 
     ax_dist.hist(scores_cal,  bins="auto", density=True, alpha=0.55,
-                 color=_COLORS["CALIBRATION"], label=f"Calibration (n={len(scores_cal)})")
+                 color=_COLORS["CALIBRATION"],
+                 label=f"Calibration — {cal_source} (n={len(scores_cal)})")
     ax_dist.hist(scores_test, bins="auto", density=True, alpha=0.55,
-                 color=_COLORS["TEST"],        label=f"Test (n={len(scores_test)})")
+                 color=_COLORS["TEST"],
+                 label=f"Test (n={len(scores_test)})")
     ax_dist.set_xlabel("Nonconformity score  s = |y−ŷ| / σ̂(x)", fontsize=10)
     ax_dist.set_ylabel("Density", fontsize=9)
     ax_dist.set_title(
-        f"Cal vs Test NCM scores\n"
-        f"KS p = {ks_p_dist:.4f}  —  {msg_dist}",
-        fontsize=9
-    )
+        f"Cal vs Test NCM scores\nKS p = {ks_p_dist:.4f}  —  {msg_dist}", fontsize=9)
     ax_dist.legend(fontsize=8)
     ax_dist.grid(True, alpha=0.25, linestyle="--")
-
-    # Right — p-value uniformity
+ 
     ax_pval.hist(p_values, bins=20, density=True, alpha=0.7,
-                 color=_COLORS["TEST"], label=f"Conformal p-values (n={len(p_values)})")
+                 color=_COLORS["TEST"],
+                 label=f"Conformal p-values (n={len(p_values)})")
     ax_pval.axhline(1.0, color="red", linestyle="--", lw=2,
                     label="Uniform(0,1) reference")
-    ax_pval.set_xlabel("Conformal p-value  p_i = #{s_cal ≥ s_i} / n_cal", fontsize=10)
+    ax_pval.set_xlabel("p_i = #{s_cal ≥ s_i} / n_cal", fontsize=10)
     ax_pval.set_ylabel("Density", fontsize=9)
     ax_pval.set_title(
-        f"P-value uniformity (KS vs Uniform)\n"
-        f"KS p = {ks_p_pval:.4f}  —  {msg_pval}",
-        fontsize=9
-    )
+        f"P-value uniformity (KS vs Uniform)\nKS p = {ks_p_pval:.4f}  —  {msg_pval}",
+        fontsize=9)
     ax_pval.set_xlim(0, 1)
     ax_pval.legend(fontsize=8)
     ax_pval.grid(True, alpha=0.25, linestyle="--")
-
+ 
     plt.suptitle(
-        f"{model} — Exchangeability diagnostics  (α={alpha})\n"
-        "Calibration and test should be exchangeable for the CP guarantee to hold.",
-        fontsize=11
-    )
+        f"{model} — Regression exchangeability diagnostics  (α={alpha})\n"
+        "Under exchangeability, cal and test distributions should match "
+        "and p-values should be uniform.",
+        fontsize=11)
     plt.tight_layout()
-
+ 
     path = out_dir / f"e1_exchangeability_regr_{model}.png"
     _savefig(fig, path)
     return path
@@ -1307,15 +1361,28 @@ def _recompute_test_scores(saved, df_excel, model, cache_path):
     y_true_mapped = y_true_mapped[valid]
     y_pred_mapped = y_pred_mapped[valid]
 
-    # ── Route C: in_set_class_* columns available → no ECFP needed ────────────
-    # Proxy LAC score: s_i = 1 - pseudo_p_{true}  approximated as:
-    #   if true class is in prediction set  → s_i ~ 0  (well-conforming)
-    #   if true class not in set            → s_i ~ 1  (non-conforming)
-    # This is a binary approximation but sufficient for the KS / uniformity test.
-    if inset_cols and (cache_path is None):
+   # ── Route C: {tag}_lac_score_true column in "Prediction Intervals" ────────
+    # Written by predict_conformal_classifier_hard_chunked() after the patch.
+    # Exact LAC scores, no ECFP needed, always preferred over binary proxy.
+    lac_col = f"{model}_lac_score_true"
+    if lac_col in df_excel.columns and has_true:
         display(Markdown(
-            "  Route C: using `in_set_class_*` columns (cache_path not provided). "
-            "Binary proxy scores — sufficient for KS test."
+            f"  Route C: reading exact LAC scores from `{lac_col}` column."
+        ))
+        df_lac        = df_excel.dropna(subset=[true_col, lac_col]).reset_index(drop=True)
+        y_true_mapped = np.array([_map(v) for v in df_lac[true_col].values])
+        valid_lac     = y_true_mapped >= 0
+        scores_test   = df_lac.loc[valid_lac, lac_col].values.astype(float)
+        y_true_mapped = y_true_mapped[valid_lac]
+        return scores_test, y_true_mapped, list(classes_orig), "excel_lac_score_true"
+ 
+    # ── Route D: in_set_class_* binary proxy (last resort) ───────────────────
+    # Approximate: 0 if true class in prediction set, 1 if not.
+    # Works without re-running mapiec.py but gives binary not continuous scores.
+    if inset_cols:
+        display(Markdown(
+            "  Route D (fallback): binary proxy from `in_set_class_*` columns. "
+            "Re-run mapiec.py with the lac_score patch for exact continuous scores."
         ))
         def _parse_inset(col):
             sfx = col.replace("in_set_class_", "")
@@ -1323,18 +1390,16 @@ def _recompute_test_scores(saved, df_excel, model, cache_path):
                 v = float(sfx); return int(v) if v == int(v) else v
             except ValueError:
                 return sfx
-
-        inset_cls_order = [_parse_inset(c) for c in inset_cols]
-        inset_to_j      = {c: i for i, c in enumerate(inset_cls_order)}
-
-        n_v       = len(df_v)
-        in_set_m  = np.zeros((n_v, len(inset_cls_order)), dtype=bool)
+ 
+        inset_cls_order  = [_parse_inset(c) for c in inset_cols]
+        inset_to_j       = {c: i for i, c in enumerate(inset_cls_order)}
+        n_v              = len(df_v)
+        in_set_m         = np.zeros((n_v, len(inset_cls_order)), dtype=bool)
         for col in inset_cols:
             j = inset_to_j.get(_parse_inset(col), -1)
             if j >= 0:
                 in_set_m[:, j] = df_v[col].values.astype(bool)
-
-        # map true label to inset column index
+ 
         inset_cls_mapped = {_map(c): i for c, i in inset_to_j.items()}
         scores_test = np.array([
             0.0 if (y_true_mapped[i] in inset_cls_mapped
@@ -1343,32 +1408,38 @@ def _recompute_test_scores(saved, df_excel, model, cache_path):
             for i in range(n_v)
         ])
         return scores_test, y_true_mapped, list(classes_orig), "inset_binary_proxy"
-
-    # ── Route B proper: ECFP recompute ────────────────────────────────────────
+ 
     if cache_path is None:
         raise RuntimeError(
-            "cache_path is None and no in_set_class_* columns found. "
-            "Pass cache_path (e.g. products/qubounds_output/mapie/ecfp4_cache.db) "
-            "as a parameter to the pipeline task."
+            "No lac_score column, no in_set_class_* columns, and cache_path is None. "
+            "Re-run mapiec.py with the lac_score patch."
         )
-    display(Markdown("  Route B: recomputing via ECFP + NCM model."))
 
+    # ── Route B proper: ECFP recompute ────────────────────────────────────────
+
+    display(Markdown("  Route B: recomputing via ECFP + NCM model."))
+ 
     smiles_col = next(
         (c for c in ["Smiles", "SMILES", "smiles"] if c in df_excel.columns), None
     )
     if smiles_col is None:
         raise RuntimeError("No Smiles column found in Excel for Route B.")
-
-    df_v = df_v.loc[df_v[smiles_col].notna()].reset_index(drop=True)
-    y_true_mapped = y_true_mapped[df_v.index] if len(df_v) < n_v else y_true_mapped
-    y_pred_mapped = y_pred_mapped[df_v.index] if len(df_v) < n_v else y_pred_mapped
-
-    from qubounds.descriptors.ecfp import init_cache, smiles_to_ecfp_cached
+ 
+    df_v_sm       = df_v.loc[df_v[smiles_col].notna()].reset_index(drop=True)
+    y_true_mapped = y_true_mapped[:len(df_v_sm)]
+    y_pred_mapped = y_pred_mapped[:len(df_v_sm)]
+ 
+    from qubounds.descriptors.ecfp import smiles_to_ecfp_cached
     from qubounds.mapie_class_lac import NCMProbabilisticClassifier
-
-    init_cache(cache_path)
-    X_test = np.array([smiles_to_ecfp_cached(s) for s in df_v[smiles_col].values])
-
+ 
+    # cache_path may be None — smiles_to_ecfp_cached works without cache,
+    # it just won't persist fingerprints between runs.
+    if cache_path is not None:
+        from qubounds.descriptors.ecfp import init_cache
+        init_cache(cache_path)
+ 
+    X_test = np.array([smiles_to_ecfp_cached(s) for s in df_v_sm[smiles_col].values])
+ 
     ncm_est = NCMProbabilisticClassifier(
         y_pred    = y_pred_mapped,
         ncm_model = sigma_model,
@@ -1378,10 +1449,42 @@ def _recompute_test_scores(saved, df_excel, model, cache_path):
     ncm_est.fit()
     pseudo_proba = ncm_est.predict_proba(X_test)
     scores_test  = 1.0 - pseudo_proba[np.arange(len(y_true_mapped)), y_true_mapped]
-
+ 
     return scores_test, y_true_mapped, list(classes_orig), "ecfp_recompute"
-
-
+ 
+ 
+def _load_lac_scores_from_excel(excel_path, model):
+    """
+    Load classification calibration LAC scores from the Excel.
+    Looks for the {model}_lac_score_true column written by the patched
+    predict_conformal_classifier_hard_chunked().
+ 
+    Priority
+    --------
+    1. Sheet "Calibration PI"  — scores used by MAPIE for the quantile.
+    2. Sheet "Training PI"     — fallback when Calibration sheet absent.
+ 
+    Returns (scores_1d_float, sheet_name) or raises RuntimeError.
+    """
+    xl      = pd.ExcelFile(excel_path)
+    lac_col = f"{model}_lac_score_true"
+ 
+    for sheet in ["Calibration PI", "Training PI"]:
+        if sheet not in xl.sheet_names:
+            continue
+        df_s = pd.read_excel(excel_path, sheet_name=sheet)
+        if lac_col in df_s.columns:
+            scores = df_s[lac_col].dropna().values.astype(float)
+            if len(scores) > 0:
+                return scores, sheet
+ 
+    raise RuntimeError(
+        f"No LAC scores found for '{model}' in {excel_path}. "
+        f"Expected sheet 'Calibration PI' or 'Training PI' "
+        f"with column '{lac_col}'. "
+        "Re-run mapiec.py after applying the lac_score patch."
+    )
+ 
 # =============================================================================
 # E2 — Classification exchangeability
 # =============================================================================
@@ -1420,16 +1523,29 @@ def plot_e2_classification_exchangeability(
 
     mapie_obj = saved["mapie"]
 
-    # ── calibration scores ─────────────────────────────────────────────────────
+    # ── Calibration scores: Excel first (exact), pickle as fallback ───────────
     try:
-        scores_cal = _get_cal_scores_classifier(mapie_obj)
-    except AttributeError as exc:
+        scores_cal, cal_source = _load_lac_scores_from_excel(class_excel_path, model)
         display(Markdown(
-            f"E2 skipped for {model}: "
-            f"cannot read calibration scores from pickle — {exc}\n"
-            "Expected attribute: `mapie._mapie_classifier.conformity_scores_`"
+            f"  Cal scores from Excel '{cal_source}': n={len(scores_cal)}, "
+            f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
         ))
-        return None, None
+    except RuntimeError as exc_excel:
+        display(Markdown(
+            f"  Excel cal scores unavailable ({exc_excel}); trying pickle."
+        ))
+        try:
+            scores_cal = _get_cal_scores_classifier(saved["mapie"])
+            cal_source = "pickle"
+            display(Markdown(
+                f"  Cal scores from pickle: n={len(scores_cal)}, "
+                f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
+            ))
+        except AttributeError as exc_pkl:
+            display(Markdown(
+                f"E2 skipped for {model}: cannot load calibration scores — {exc_pkl}"
+            ))
+            return None, None
 
     display(Markdown(
         f"  Calibration scores: n={len(scores_cal)}, "
