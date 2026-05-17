@@ -310,9 +310,12 @@ The coverage guarantee holds under the **exchangeability assumption**: calibrati
 
 These diagnostics are computed automatically in all tutorial and full pipeline tasks.
 
+regression_exchangeability.png
+![FATHEAD_EPA_exchtest](regression_exchangeability.png "Exchangeability tests for VEGA QSAR model for Fathead Minnow LC50 96h (from EPA T.E.S.T software) FATHEAD_EPA")
+
 ![FISH_IRFMN_exchtest](classification_exchangeability.png "Exchangeability tests for VEGA QSAR classification model for fish acute (LC50) toxicity FISH_IRFMN")
 
-![FISH_IRFMN_exchtest](classification_exchangeability_classwise.png "Classwise Exchangeability tests for VEGA QSAR classification model for fish acute (LC50) toxicity FISH_IRFMN")
+![FISH_IRFMN_exchtestc](classification_exchangeability_classwise.png "Classwise Exchangeability tests for VEGA QSAR classification model for fish acute (LC50) toxicity FISH_IRFMN")
 
 ---
 

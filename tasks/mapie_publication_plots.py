@@ -1076,162 +1076,139 @@ def plot_c5_setsize_by_adi(df, meta, model, alpha, out_dir, adi_col="ADI", n_bin
 # =============================================================================
 # E1 — Regression exchangeability plot
 # =============================================================================
-def _load_ncm_scores_from_excel(excel_path, model):
+def _compute_ncm_scores_regr(df, model):
     """
-    Load regression calibration nonconformity scores from the Excel.
- 
-    Priority
-    --------
-    1. Sheet "Calibration"  — exact scores used by MAPIE for the quantile.
-    2. Sheet "Training"     — used when calibration sheet is absent.
-    3. Recompute from {model}_true / _pred / _sigma in whichever sheet matched.
- 
-    Returns (scores_1d_float_array, sheet_name_string)
-    Raises RuntimeError if nothing works.
+    Compute regression nonconformity scores directly from a DataFrame sheet.
+
+    NCM = |y_true - y_pred| / sigma(x)
+
+    All three columns are always written by mapie.py to every sheet
+    (Training, Calibration, Prediction Intervals), so no pickle needed.
+
+    Returns
+    -------
+    scores        : 1-D float array, finite values only
+    has_true_mask : bool array, True where true label was present
     """
-    xl      = pd.ExcelFile(excel_path)
-    ncm_col = f"{model}_ncm"
- 
-    for sheet in ["Calibration", "Training"]:
-        if sheet not in xl.sheet_names:
-            continue
-        df_s = pd.read_excel(excel_path, sheet_name=sheet)
- 
-        # Direct column
-        if ncm_col in df_s.columns:
-            scores = df_s[ncm_col].dropna().values.astype(float)
-            if len(scores) > 0:
-                return scores, sheet
- 
-        # Recompute from true / pred / sigma
-        true_col  = f"{model}_true"
-        pred_col  = f"{model}_pred"
-        sigma_col = f"{model}_sigma"
-        if all(c in df_s.columns for c in [true_col, pred_col, sigma_col]):
-            eps        = 1e-6
-            sigma_safe = np.maximum(df_s[sigma_col].values.astype(float), eps)
-            scores     = (
-                np.abs(df_s[true_col].values.astype(float) -
-                       df_s[pred_col].values.astype(float)) / sigma_safe
-            )
-            scores = scores[np.isfinite(scores)]
-            if len(scores) > 0:
-                return scores, f"{sheet} (recomputed)"
- 
-    raise RuntimeError(
-        f"No calibration NCM scores found for '{model}' in {excel_path}. "
-        "Expected a 'Calibration' or 'Training' sheet with a "
-        f"'{ncm_col}' column, or '{model}_true'/'{model}_pred'/'{model}_sigma' columns."
-    )
- 
- 
+    true_col  = f"{model}_true"
+    pred_col  = f"{model}_pred"
+    sigma_col = f"{model}_sigma"
+
+    missing = [c for c in [pred_col, sigma_col] if c not in df.columns]
+    if missing:
+        raise RuntimeError(f"Missing columns for NCM computation: {missing}")
+
+    pred  = df[pred_col].values.astype(float)
+    sigma = np.maximum(df[sigma_col].values.astype(float), 1e-6)
+
+    has_true = true_col in df.columns and df[true_col].notna().any()
+    if has_true:
+        true_vals      = df[true_col].values.astype(float)
+        has_true_mask  = np.isfinite(true_vals)
+        scores         = np.abs(true_vals - pred) / sigma
+    else:
+        # no true labels (e.g. CompTox application split):
+        # use interval width / 2 as a proxy for the NCM score
+        # (width = 2 * q_hat * sigma, so width/2/sigma ≈ q_hat, a constant —
+        #  not useful for KS, so just return pred-only scores)
+        has_true_mask = np.zeros(len(df), dtype=bool)
+        scores        = np.full(len(df), np.nan)
+
+    scores = np.where(np.isfinite(scores), scores, np.nan)
+    return scores, has_true_mask
+
+
 def plot_e1_regression_exchangeability(
     regr_excel_path, regr_pickle_path, model, alpha, out_dir
 ):
     """
     Left  : calibration vs test nonconformity score distributions (KS test).
     Right : conformal p-value distribution vs Uniform(0,1) (KS test).
- 
-    Cal scores  : Excel "Calibration" sheet  {model}_ncm
-                  → fallback Excel "Training" sheet
-                  → fallback pickle _mapie_regressor.conformity_scores_
-    Test scores : Excel "Prediction Intervals" sheet  {model}_ncm
-                  → fallback recomputed from true/pred/sigma
+
+    Cal scores  : "Calibration" sheet  |y - ŷ| / σ̂(x)
+                  → fallback "Training" sheet
+    Test scores : "Prediction Intervals" sheet  |y - ŷ| / σ̂(x)
+
+    All columns needed are always written by mapie.py; no pickle required.
     """
     out_dir = Path(out_dir)
- 
-    # ── Calibration scores: Excel first, pickle last ───────────────────────────
-    try:
-        scores_cal, cal_source = _load_ncm_scores_from_excel(regr_excel_path, model)
-        display(Markdown(
-            f"  Cal scores from Excel sheet '{cal_source}': n={len(scores_cal)}, "
-            f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
-        ))
-    except RuntimeError as exc_excel:
-        display(Markdown(
-            f"  Excel cal scores unavailable ({exc_excel}); trying pickle."
-        ))
+
+    xl = pd.ExcelFile(regr_excel_path)
+
+    # ── Calibration scores ─────────────────────────────────────────────────────
+    scores_cal = None
+    for sheet in ["Calibration PI", "Training PI"]:
+        if sheet not in xl.sheet_names:
+            continue
         try:
-            with open(regr_pickle_path, "rb") as fh:
-                saved = pickle.load(fh)
-            raw        = saved["mapie"]._mapie_regressor.conformity_scores_
-            scores_cal = raw[~np.isnan(raw)]
-            cal_source = "pickle"
-            display(Markdown(
-                f"  Cal scores from pickle: n={len(scores_cal)}, "
-                f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
-            ))
-        except Exception as exc_pkl:
-            display(Markdown(
-                f"E1 skipped for {model}: cannot load calibration scores — {exc_pkl}"
-            ))
-            return None
- 
-    # ── Test scores from "Prediction Intervals" sheet ─────────────────────────
-    df      = pd.read_excel(regr_excel_path, sheet_name="Prediction Intervals")
-    ncm_col = f"{model}_ncm"
- 
-    if ncm_col in df.columns:
-        scores_test = df[ncm_col].dropna().values.astype(float)
-    else:
-        true_col  = f"{model}_true"
-        pred_col  = f"{model}_pred"
-        sigma_col = f"{model}_sigma"
-        if all(c in df.columns for c in [true_col, pred_col, sigma_col]):
-            eps         = 1e-6
-            sigma_safe  = np.maximum(df[sigma_col].values.astype(float), eps)
-            scores_test = (
-                np.abs(df[true_col].values.astype(float) -
-                       df[pred_col].values.astype(float)) / sigma_safe
-            )
-            display(Markdown(
-                f"Test `{ncm_col}` not found; recomputed from true/pred/sigma."
-            ))
-        else:
-            display(Markdown(
-                f"E1 skipped for {model}: no `{ncm_col}` in 'Prediction Intervals' "
-                "and cannot recompute (true/pred/sigma columns missing)."
-            ))
-            return None
- 
+            df_s = pd.read_excel(regr_excel_path, sheet_name=sheet)
+            scores_raw, mask = _compute_ncm_scores_regr(df_s, model)
+            scores_cal = scores_raw[mask & np.isfinite(scores_raw)]
+            if len(scores_cal) > 0:
+                cal_source = sheet
+                display(Markdown(
+                    f"  Cal scores from '{cal_source}': n={len(scores_cal)}, "
+                    f"range=[{scores_cal.min():.3f}, {scores_cal.max():.3f}]"
+                ))
+                break
+        except Exception as exc:
+            display(Markdown(f"  Sheet '{sheet}' failed: {exc}"))
+
+    if scores_cal is None or len(scores_cal) == 0:
+        display(Markdown(f"E1 skipped for {model}: cannot compute calibration NCM scores."))
+        return None
+
+    # ── Test scores ────────────────────────────────────────────────────────────
+    try:
+        df_test = pd.read_excel(regr_excel_path, sheet_name="Prediction Intervals")
+        scores_raw, mask = _compute_ncm_scores_regr(df_test, model)
+        scores_test = scores_raw[mask & np.isfinite(scores_raw)]
+        display(Markdown(
+            f"  Test scores: n={len(scores_test)}, "
+            f"range=[{scores_test.min():.3f}, {scores_test.max():.3f}]"
+        ))
+    except Exception as exc:
+        display(Markdown(f"E1 skipped for {model}: cannot compute test NCM scores — {exc}"))
+        return None
+
     # ── Conformal p-values ─────────────────────────────────────────────────────
     p_values = np.array([np.mean(scores_cal >= s_i) for s_i in scores_test])
- 
+
     # ── KS tests ───────────────────────────────────────────────────────────────
     rng = np.random.default_rng(42)
     ks_stat_dist, ks_p_dist = ks_2samp(scores_cal, scores_test)
     ks_stat_pval, ks_p_pval = ks_2samp(p_values, rng.uniform(size=len(p_values)))
- 
+
     msg_dist = ("OK — no evidence of distributional shift"
                 if ks_p_dist > 0.05 else
-                "WARNING — possible shift (coverage may deviate)")
+                "\nWARNING — possible shift (coverage may deviate)")
     msg_pval = ("OK — p-values consistent with uniformity"
                 if ks_p_pval > 0.05 else
-                "WARNING — p-values not uniform (exchangeability suspect)")
- 
+                "\nWARNING — p-values not uniform (exchangeability suspect)")
+
     display(Markdown(
-        f"### Regression exchangeability: {model}  (cal from: {cal_source})\n"
-        f"- Cal vs Test NCM: KS stat={ks_stat_dist:.4f}, p={ks_p_dist:.4f}  →  {msg_dist}\n"
+        f"### Regression exchangeability: {model}  (cal from: {cal_source})"
+        f"- Cal vs Test NCM: KS stat={ks_stat_dist:.4f}, p={ks_p_dist:.4f}  →  {msg_dist}"
         f"- P-value unif.:   KS stat={ks_stat_pval:.4f}, p={ks_p_pval:.4f}  →  {msg_pval}"
     ))
- 
+
     # ── Plot ──────────────────────────────────────────────────────────────────
     fig, (ax_dist, ax_pval) = plt.subplots(1, 2, figsize=(12, 4))
     fig.patch.set_facecolor(PALETTE["background"])
- 
+
     ax_dist.hist(scores_cal,  bins="auto", density=True, alpha=0.55,
                  color=_COLORS["CALIBRATION"],
                  label=f"Calibration — {cal_source} (n={len(scores_cal)})")
     ax_dist.hist(scores_test, bins="auto", density=True, alpha=0.55,
                  color=_COLORS["TEST"],
                  label=f"Test (n={len(scores_test)})")
-    ax_dist.set_xlabel("Nonconformity score  s = |y−ŷ| / σ̂(x)", fontsize=10)
+    ax_dist.set_xlabel("Nonconformity score  |y−ŷ| / σ̂(x)", fontsize=10)
     ax_dist.set_ylabel("Density", fontsize=9)
     ax_dist.set_title(
-        f"Cal vs Test NCM scores\nKS p = {ks_p_dist:.4f}  —  {msg_dist}", fontsize=9)
+        f"Cal vs Test NCM scores KS p = {ks_p_dist:.4f}  —  {msg_dist}", fontsize=9)
     ax_dist.legend(fontsize=8)
     ax_dist.grid(True, alpha=0.25, linestyle="--")
- 
+
     ax_pval.hist(p_values, bins=20, density=True, alpha=0.7,
                  color=_COLORS["TEST"],
                  label=f"Conformal p-values (n={len(p_values)})")
@@ -1240,19 +1217,19 @@ def plot_e1_regression_exchangeability(
     ax_pval.set_xlabel("p_i = #{s_cal ≥ s_i} / n_cal", fontsize=10)
     ax_pval.set_ylabel("Density", fontsize=9)
     ax_pval.set_title(
-        f"P-value uniformity (KS vs Uniform)\nKS p = {ks_p_pval:.4f}  —  {msg_pval}",
+        f"P-value uniformity (KS vs Uniform) KS p = {ks_p_pval:.4f}  —  {msg_pval}",
         fontsize=9)
     ax_pval.set_xlim(0, 1)
     ax_pval.legend(fontsize=8)
     ax_pval.grid(True, alpha=0.25, linestyle="--")
- 
+
     plt.suptitle(
-        f"{model} — Regression exchangeability diagnostics  (α={alpha})\n"
+        f"{model} — Regression exchangeability diagnostics  (α={alpha})"
         "Under exchangeability, cal and test distributions should match "
         "and p-values should be uniform.",
         fontsize=11)
     plt.tight_layout()
- 
+
     path = out_dir / f"e1_exchangeability_regr_{model}.png"
     _savefig(fig, path)
     return path
@@ -1597,15 +1574,15 @@ if model_type == "regression":
             plot_r4_sigma_vs_width(df_regr, meta, regr_model, alpha, out_dir))
 
         model_pickle =  upstream["mapie_*"][f"mapie_{regr_model}_{ncm}"]["ncmodel"]
-        if model_pickle is not None:
-             display(Markdown(f"# Exchangeability — {regr_model}"))
-             plot_e1_regression_exchangeability(
-                 regr_excel_path  = _path_a,
-                 regr_pickle_path = model_pickle,
-                 model  = regr_model,
-                 alpha  = alpha,
-                 out_dir = out_dir,
-             )
+        # if model_pickle is not None:
+        display(Markdown(f"# Exchangeability — {regr_model}"))
+        plot_e1_regression_exchangeability(
+            regr_excel_path  = _path_a,
+            regr_pickle_path = model_pickle,
+            model  = regr_model,
+            alpha  = alpha,
+            out_dir = out_dir,
+        )
 
 # ── Classification plots ──────────────────────────────────────────────────────
 if model_type == "classification":
