@@ -90,7 +90,7 @@ qubounds_clean/
 
 The adaptive variant achieves molecule-specific interval widths: wider for structurally novel compounds, narrower for well-represented chemical space.
 
-![FATHEAD_EPA](regression_demo.png "FATHEAD_EPA regression model")
+![FATHEAD_EPA](regression_demo.png "VEGA QSAR model for Fathead Minnow LC50 96h (from EPA T.E.S.T software) FATHEAD_EPA")
 
 ### Classification
 
@@ -112,7 +112,17 @@ LAC is then applied to the pseudo-probabilities. **Coverage is guaranteed regard
 | **Coverage guarantee** | Marginal coverage ≥ 1−α |
 | **Efficiency metric** | Mean set size; singleton rate (fraction of size-1 sets) |
 
-![FISH_IRFMN](classification_demo.png "FISH_IRFMN classification model")
+![FISH_IRFMN](classification_demo.png "VEGA QSAR classification model for fish acute (LC50) toxicity FISH_IRFMN")
+
+### Toxicity Classes
+
+| Class | Description |
+|---|---|
+| 1 | Toxic-1 (< 1 mg/L) |
+| 2 | Toxic-2 (1–10 mg/L) |
+| 3 | Toxic-3 (10–100 mg/L) |
+| 4 | Non-Toxic (> 100 mg/L) |
+
 
 ---
 
