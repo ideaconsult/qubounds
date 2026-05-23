@@ -27,7 +27,7 @@ Key properties:
 qubounds_clean/
 ├── src/qubounds/               # Core library
 │   ├── mapie_regression.py     # Conformal regression: ExternalPredictor, train/predict functions
-│   ├── mapie_class_lac.py      # Conformal classification: NCMProbabilisticClassifier, LAC wrapper
+│   ├── mapie_class_lac.py      # Conformal classification: NCMProbabilisticClassifier, Least Ambiguous Set-valued Classifier (LAC) wrapper
 │   ├── mapie_class_proba.py    # Classification variant using native predict_proba()
 │   ├── mapie_diagnostic.py     # Sigma model factory, exchangeability tests, diagnostics
 │   ├── descriptors/            # ECFP4 fingerprint computation with SQLite cache
@@ -104,7 +104,7 @@ Two approaches are implemented and compared in the tutorial:
 P_pseudo(class=j | x, ŷ) = P(distance = |j − ŷ| | x)
 ```
 
-LAC is then applied to the pseudo-probabilities. **Coverage is guaranteed regardless of NCM quality**; NCM quality determines efficiency (singleton rate and mean set size).
+[Least Ambiguous Set-valued Classifier (LAC)](https://mapie.readthedocs.io/en/stable/examples_classification/2-advanced-analysis/plot_comp_methods_on_2d_dataset.html) is then applied to the pseudo-probabilities. **Coverage is guaranteed regardless of NCM quality**; NCM quality determines efficiency (singleton rate and mean set size).
 
 | Concept | Definition |
 |---|---|
