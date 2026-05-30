@@ -246,7 +246,7 @@ To add external predictions and AD comparison:
 
 ---
 
-## Full Conformal prdiction with external QSAR models pipeline
+## Full Conformal prediction with external QSAR models pipeline
 
 The full pipeline (`pipeline.mapie.yaml` + `env.yaml`) trains conformal models for all VEGA endpoints and applies them to an external compound inventory (e.g. EPA CompTox).
 - The pipeline reads VEGA prediction form files ; does not run VEGA itself. 
