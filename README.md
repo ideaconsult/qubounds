@@ -4,6 +4,10 @@
 
 A model-agnostic open-source pipeline that retrofits any QSAR model with statistically guaranteed uncertainty estimates using adaptive conformal prediction (CP). The framework produces prediction intervals for regression endpoints and prediction sets for classification endpoints at a user-specified nominal confidence level (e.g. 90%), without retraining the underlying model.
 
+## Related Publication
+
+Jeliazkova, N.; Kochev, N.; Iliev, L.; Jeliazkov, V. **Beyond Heuristics: A Model-Agnostic Framework for Uncertainty Quantification in QSAR via Adaptive Conformal Prediction**. *Chemical Research in Toxicology*. Accepted June 2026.
+
 ---
 
 ## Overview
