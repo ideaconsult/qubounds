@@ -6,7 +6,7 @@ A model-agnostic open-source pipeline that retrofits any QSAR model with statist
 
 ## Related Publication
 
-Jeliazkova, N.; Kochev, N.; Iliev, L.; Jeliazkov, V. **Beyond Heuristics: A Model-Agnostic Framework for Uncertainty Quantification in QSAR via Adaptive Conformal Prediction**. *Chemical Research in Toxicology*. Accepted June 2026.
+Jeliazkova, N.; Kochev, N.; Iliev, L.; Jeliazkov, V. **Beyond Heuristics: A Model-Agnostic Framework for Uncertainty Quantification in QSAR via Adaptive Conformal Prediction**. [*ACS Chemical Research in Toxicology*](https://pubs.acs.org/doi/10.1021/acs.chemrestox.5c00293). Accepted June 2026.
 
 ---
 
@@ -114,7 +114,7 @@ P_pseudo(class=j | x, ŷ) = P(distance = |j − ŷ| | x)
 |---|---|
 | **Prediction set** | `C(x) = {y : p̂(y\|x) ≥ 1 − q̂}` |
 | **Coverage guarantee** | Marginal coverage ≥ 1−α |
-| **Efficiency metric** | Mean set size; singleton rate (fraction of size-1 sets) |
+| **Efficiency metric** | Mean set size; singleton rate (fraction of size=1 sets) |
 
 ![FISH_IRFMN](classification_demo.png "VEGA QSAR classification model for fish acute (LC50) toxicity FISH_IRFMN")
 
