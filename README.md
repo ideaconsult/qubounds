@@ -146,6 +146,20 @@ The sigma/NCM model is specified by a code string in the pipeline configuration:
 
 ---
 
+> **New to conformal prediction?**
+>
+> **General introduction**
+>
+> - Angelopoulos AN, Bates S (2021). *A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification*. https://arxiv.org/abs/2107.07511
+> - Fontana M, Zeni G, Vantini S (2020). *Conformal Prediction: a Unified Review of Theory and New Challenges*. https://arxiv.org/abs/2005.07972
+>
+> **QSAR and cheminformatics**
+>
+> - Astigarraga M, Sánchez-Ruiz A, Colmenarejo G (2025). *Conformal Prediction-based Machine Learning in Cheminformatics: Current Applications and New Challenges* [10.1016/j.ailsci.2025.100127](https://doi.org/10.1016/j.ailsci.2025.100127)
+> - Norinder U, Carlsson L, Boyer S (2014). *Introducing Conformal Prediction in Predictive Modeling: A Transparent and Flexible Alternative to Applicability Domain Determination* [10.1021/ci5001168](https://doi.org/10.1021/ci5001168).
+
+---
+
 ## Installation
 
 Requires Python ≥ 3.12. Dependencies are managed with UV.
