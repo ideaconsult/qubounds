@@ -6,7 +6,7 @@ A model-agnostic open-source pipeline that retrofits any QSAR model with statist
 
 ## Related Publication
 
-Jeliazkova, N.; Kochev, N.; Iliev, L.; Jeliazkov, V. **Beyond Heuristics: A Model-Agnostic Framework for Uncertainty Quantification in QSAR via Adaptive Conformal Prediction**. [*ACS Chemical Research in Toxicology*](https://pubs.acs.org/doi/10.1021/acs.chemrestox.5c00293). Accepted June 2026.
+Jeliazkova, N.; Kochev, N.; Iliev, L.; Jeliazkov, V. **Beyond Heuristics: A Model-Agnostic Framework for Uncertainty Quantification in QSAR via Adaptive Conformal Prediction**. [*ACS Chemical Research in Toxicology*](https://pubs.acs.org/doi/10.1021/acs.chemrestox.5c00293). Accepted June 2026 [doi:10.1021/acs.chemrestox.6c00065](https://doi.org/10.1021/acs.chemrestox.6c00065).
 
 ---
 
