@@ -11,7 +11,7 @@ from qubounds.mapie_diagnostic import (
     plot_normalized_ordinal_distances,
     plot_ncm_diagnostics, compute_ordinal_sigma
 )
-from tasks.mapie_class_proba import (
+from qubounds.mapie_class_proba import (
     train_conformal_classifier_proba, predict_conformal_classifier_proba
 )
 import matplotlib.pyplot as plt

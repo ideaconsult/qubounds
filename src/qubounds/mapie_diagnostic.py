@@ -128,12 +128,38 @@ def flag_exchangeability(metrics, ks_thresholds=(0.05, 0.01), delta_q_fraction=(
     """
     # Default to green if no exchangeability metrics
     flag = "green"
-    
-    if all(k in metrics for k in ["exch_ks_pvalue", "exch_q_cal", "exch_delta_q"]):
-        ks_p = metrics["exch_ks_pvalue"]
-        q_cal = metrics.get("exch_q_cal", None)
-        delta_q = metrics.get("exch_delta_q", None)
 
+    # Accept BOTH key spellings (fixed 2026-09-19). diagnose_exchangeability()
+    # returns unprefixed keys ("ks_pvalue", "q_cal", "delta_q"), while the
+    # aggregated model_metrics dicts carry them prefixed ("exch_*"). This
+    # guard only knew the prefixed form, so the obvious composition
+    #     flag_exchangeability(diagnose_exchangeability(cal, ref, alpha))
+    # never satisfied it and fell through to the "green" default -- silently,
+    # and in the UNSAFE direction: a run with KS p=2.8e-5 and relative
+    # quantile drift of 17% (which is red by these very thresholds) was
+    # reported exchangeable.
+    def _metric(name):
+        for key in (f"exch_{name}", name):
+            if key in metrics:
+                return metrics[key]
+        return None
+
+    ks_p = _metric("ks_pvalue")
+    q_cal = _metric("q_cal")
+    delta_q = _metric("delta_q")
+
+    if ks_p is None and q_cal is None and delta_q is None:
+        # genuinely no diagnostics attached -- the documented "green" case
+        logger.debug("flag_exchangeability: no exchangeability metrics, "
+                     "defaulting to green")
+    elif ks_p is None or q_cal is None or delta_q is None:
+        # PARTIAL metrics are not a green light; say so instead of implying one
+        logger.warning(
+            "flag_exchangeability: incomplete metrics "
+            "(ks_pvalue=%s, q_cal=%s, delta_q=%s) -- cannot judge "
+            "exchangeability, returning 'unknown'", ks_p, q_cal, delta_q)
+        flag = "unknown"
+    else:
         if q_cal is not None and delta_q is not None:
             rel_delta = delta_q / q_cal if q_cal != 0 else 0.0
             
